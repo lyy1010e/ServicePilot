@@ -3,9 +3,6 @@ name: Test
 on:
   pull_request:
   push:
-    branches:
-      - main
-      - master
 
 jobs:
   test:
@@ -24,8 +21,28 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
       - name: Install dependencies
         run: npm ci
 
-      - name: Run tests
-        run: npm run test
+      - name: Type check
+        run: npm run lint
+
+      - name: Frontend unit tests
+        run: npm run test:unit
+
+      - name: Rust tests
+        run: npm run test:rust
+
+      - name: Renderer build
+        run: npm run build:renderer
