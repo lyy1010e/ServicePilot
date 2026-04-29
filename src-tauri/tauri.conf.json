@@ -1,0 +1,45 @@
+{
+  "$schema": "./gen/schemas/desktop-schema.json",
+  "productName": "ServicePilot",
+  "version": "0.1.0",
+  "identifier": "com.servicepilot.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev:renderer",
+    "devUrl": "http://localhost:5173",
+    "beforeBuildCommand": "npm run build:renderer",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "ServicePilot",
+        "width": 1440,
+        "height": 960,
+        "minWidth": 1160,
+        "minHeight": 720,
+        "resizable": true,
+        "decorations": false,
+        "center": true
+      }
+    ],
+    "security": {
+      "capabilities": ["default"]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/icon.ico"
+    ],
+    "targets": "all",
+    "windows": {
+      "wix": {
+        "language": "zh-CN"
+      }
+    }
+  }
+}

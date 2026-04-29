@@ -1,0 +1,27 @@
+{
+  "name": "service-pilot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Desktop manager for local Spring Boot and Vue development services.",
+  "scripts": {
+    "dev": "tauri dev",
+    "dev:renderer": "vite",
+    "build": "tauri build",
+    "build:renderer": "vite build",
+    "preview": "vite preview",
+    "lint": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json"
+  },
+  "dependencies": {
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.8.0",
+    "@types/node": "^24.0.10",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "@vitejs/plugin-react": "^5.0.0",
+    "typescript": "^5.8.3",
+    "vite": "^7.0.0"
+  }
+}
