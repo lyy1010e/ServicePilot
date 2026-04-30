@@ -399,13 +399,22 @@ impl ServicePilotBackend {
   async fn import_idea_maven_config(&self, project_dir: &str) -> BackendResult<AppSettings> {
     let workspace_file = find_idea_workspace(Path::new(project_dir))
       .ok_or_else(|| format!("IDEA workspace file not found under or above: {project_dir}"))?;
-    let content = fs::read_to_string(&workspace_file)
-      .await
-      .map_err(|_| format!("IDEA workspace file not found: {}", workspace_file.display()))?;
+    let content = fs::read_to_string(&workspace_file).await.map_err(|_| {
+      format!(
+        "IDEA workspace file not found: {}",
+        workspace_file.display()
+      )
+    })?;
 
-    let maven_settings_file = extract_xml_option_value(&content, "userSettingsFile")
-      .ok_or_else(|| format!("No IDEA Maven settings file found in {}", workspace_file.display()))?;
-    let maven_local_repository = extract_xml_option_value(&content, "localRepository").unwrap_or_default();
+    let maven_settings_file =
+      extract_xml_option_value(&content, "userSettingsFile").ok_or_else(|| {
+        format!(
+          "No IDEA Maven settings file found in {}",
+          workspace_file.display()
+        )
+      })?;
+    let maven_local_repository =
+      extract_xml_option_value(&content, "localRepository").unwrap_or_default();
 
     let settings = {
       let mut inner = self.inner.lock().await;
@@ -422,22 +431,39 @@ impl ServicePilotBackend {
   async fn import_idea_project(&self, project_dir: &str) -> BackendResult<ServiceConfig> {
     let prepared = self.prepare_idea_project(project_dir, false).await?;
     self
-      .save_imported_project_service(prepared.service, &prepared.imported_settings, RuntimeStatus::Stopped, None)
+      .save_imported_project_service(
+        prepared.service,
+        &prepared.imported_settings,
+        RuntimeStatus::Stopped,
+        None,
+      )
       .await
   }
 
-  async fn prepare_idea_project(&self, project_dir: &str, prepare_classpath: bool) -> BackendResult<PreparedIdeaProject> {
+  async fn prepare_idea_project(
+    &self,
+    project_dir: &str,
+    prepare_classpath: bool,
+  ) -> BackendResult<PreparedIdeaProject> {
     let selected_path = Path::new(project_dir);
     let workspace_file = find_idea_workspace(selected_path)
       .ok_or_else(|| format!("IDEA workspace file not found under or above: {project_dir}"))?;
     let project_root = workspace_file
       .parent()
       .and_then(Path::parent)
-      .ok_or_else(|| format!("Failed to determine IDEA project root for {}", workspace_file.display()))?
+      .ok_or_else(|| {
+        format!(
+          "Failed to determine IDEA project root for {}",
+          workspace_file.display()
+        )
+      })?
       .to_path_buf();
-    let workspace_content = fs::read_to_string(&workspace_file)
-      .await
-      .map_err(|error| format!("Failed to read IDEA workspace file {}: {error}", workspace_file.display()))?;
+    let workspace_content = fs::read_to_string(&workspace_file).await.map_err(|error| {
+      format!(
+        "Failed to read IDEA workspace file {}: {error}",
+        workspace_file.display()
+      )
+    })?;
 
     let run_configs = extract_idea_spring_run_configs(&workspace_content);
     if run_configs.is_empty() {
@@ -447,8 +473,13 @@ impl ServicePilotBackend {
       ));
     }
 
-    let selected_config = select_idea_run_config(&run_configs, &workspace_content, selected_path, &project_root)
-      .ok_or_else(|| format!("No matching Spring Boot run configuration found for {project_dir}"))?;
+    let selected_config = select_idea_run_config(
+      &run_configs,
+      &workspace_content,
+      selected_path,
+      &project_root,
+    )
+    .ok_or_else(|| format!("No matching Spring Boot run configuration found for {project_dir}"))?;
 
     let misc_file = project_root.join(".idea").join("misc.xml");
     let misc_content = fs::read_to_string(&misc_file).await.unwrap_or_default();
@@ -459,7 +490,12 @@ impl ServicePilotBackend {
       .or_else(|| fallback_java_home(project_jdk_name.as_deref()));
 
     let working_dir = resolve_idea_working_dir(&project_root, selected_path, &selected_config)
-      .ok_or_else(|| format!("Failed to resolve module directory for {}", selected_config.main_class))?;
+      .ok_or_else(|| {
+        format!(
+          "Failed to resolve module directory for {}",
+          selected_config.main_class
+        )
+      })?;
 
     let imported_settings = extract_idea_maven_settings(&workspace_content, &project_root);
     let profiles = extract_profiles_from_args(&selected_config.program_args);
@@ -480,7 +516,9 @@ impl ServicePilotBackend {
 
     let mut env = selected_config.env.clone();
     if let Some(java_home) = jdk_home {
-      env.entry("JAVA_HOME".to_string()).or_insert_with(|| java_home.clone());
+      env
+        .entry("JAVA_HOME".to_string())
+        .or_insert_with(|| java_home.clone());
       env.entry("JDK_HOME".to_string()).or_insert(java_home);
     }
 
@@ -492,7 +530,13 @@ impl ServicePilotBackend {
         imported_settings.maven_settings_file.clone()
       },
       maven_local_repository: if imported_settings.maven_local_repository.is_empty() {
-        self.inner.lock().await.settings.maven_local_repository.clone()
+        self
+          .inner
+          .lock()
+          .await
+          .settings
+          .maven_local_repository
+          .clone()
       } else {
         imported_settings.maven_local_repository.clone()
       },
@@ -509,14 +553,17 @@ impl ServicePilotBackend {
 
     let java_command = env
       .get("JAVA_HOME")
-      .map(|java_home| Path::new(java_home).join("bin").join(if cfg!(windows) { "java.exe" } else { "java" }))
+      .map(|java_home| {
+        Path::new(java_home)
+          .join("bin")
+          .join(if cfg!(windows) { "java.exe" } else { "java" })
+      })
       .filter(|path| path.exists())
       .map(|path| path.to_string_lossy().to_string())
       .unwrap_or_else(|| "java".to_string());
 
     // 构建 JVM 参数，确保 -Dfile.encoding=UTF-8 在最前面
-    let mut jvm_args = vec!["-Dfile.encoding=UTF-8".to_string()];
-    jvm_args.extend(selected_config.jvm_args.clone());
+    let jvm_args = merge_managed_jvm_args(&selected_config.jvm_args);
 
     let service = ServiceConfig {
       id: existing_service_id.unwrap_or_else(new_id),
@@ -625,11 +672,18 @@ impl ServicePilotBackend {
 
     let package_file = project_root.join("package.json");
     if fs::metadata(&package_file).await.is_ok() {
-      let content = fs::read_to_string(&package_file)
-        .await
-        .map_err(|error| format!("Failed to read package.json {}: {error}", package_file.display()))?;
-      let package = serde_json::from_str::<PackageJson>(&content)
-        .map_err(|error| format!("Failed to parse package.json {}: {error}", package_file.display()))?;
+      let content = fs::read_to_string(&package_file).await.map_err(|error| {
+        format!(
+          "Failed to read package.json {}: {error}",
+          package_file.display()
+        )
+      })?;
+      let package = serde_json::from_str::<PackageJson>(&content).map_err(|error| {
+        format!(
+          "Failed to parse package.json {}: {error}",
+          package_file.display()
+        )
+      })?;
 
       if let Some(frontend_script) = select_frontend_script(&package) {
         let name = package
@@ -667,7 +721,9 @@ impl ServicePilotBackend {
       let service_id = service.id.clone();
       tauri::async_runtime::spawn(async move {
         if let Err(error) = backend.start_service(&service_id).await {
-          backend.mark_process_failed(&service_id, error, FailureCategory::Process).await;
+          backend
+            .mark_process_failed(&service_id, error, FailureCategory::Process)
+            .await;
         }
       });
       return Ok(service);
@@ -692,7 +748,11 @@ impl ServicePilotBackend {
       )
       .await?;
     self
-      .append_log(&service.id, LogSource::System, "Preparing Java classpath in the background...".to_string())
+      .append_log(
+        &service.id,
+        LogSource::System,
+        "Preparing Java classpath in the background...".to_string(),
+      )
       .await;
 
     let backend = self.clone();
@@ -708,34 +768,59 @@ impl ServicePilotBackend {
         if !backend.should_continue_background_start(&service_id).await {
           return Ok(());
         }
-        backend.update_service_classpath(&service_id, classpath).await?;
         backend
-          .append_log(&service_id, LogSource::System, "Java classpath prepared. Launching service...".to_string())
+          .update_service_classpath(&service_id, classpath)
+          .await?;
+        backend
+          .append_log(
+            &service_id,
+            LogSource::System,
+            "Java classpath prepared. Launching service...".to_string(),
+          )
           .await;
         backend.start_service(&service_id).await
       }
       .await;
 
       if let Err(error) = result {
-        backend.mark_process_failed(&service_id, error, FailureCategory::Process).await;
+        backend
+          .append_log(&service_id, LogSource::System, error)
+          .await;
+        backend
+          .mark_process_failed(
+            &service_id,
+            classpath_preparation_failed_message(),
+            FailureCategory::Compile,
+          )
+          .await;
       }
     });
 
     Ok(service)
   }
 
-  async fn import_frontend_project(&self, project_dir: &str) -> BackendResult<Option<ServiceConfig>> {
+  async fn import_frontend_project(
+    &self,
+    project_dir: &str,
+  ) -> BackendResult<Option<ServiceConfig>> {
     let project_root = PathBuf::from(project_dir);
     let package_file = project_root.join("package.json");
     if fs::metadata(&package_file).await.is_err() {
       return Ok(None);
     }
 
-    let content = fs::read_to_string(&package_file)
-      .await
-      .map_err(|error| format!("Failed to read package.json {}: {error}", package_file.display()))?;
-    let package = serde_json::from_str::<PackageJson>(&content)
-      .map_err(|error| format!("Failed to parse package.json {}: {error}", package_file.display()))?;
+    let content = fs::read_to_string(&package_file).await.map_err(|error| {
+      format!(
+        "Failed to read package.json {}: {error}",
+        package_file.display()
+      )
+    })?;
+    let package = serde_json::from_str::<PackageJson>(&content).map_err(|error| {
+      format!(
+        "Failed to parse package.json {}: {error}",
+        package_file.display()
+      )
+    })?;
 
     let Some(frontend_script) = select_frontend_script(&package) else {
       return Ok(None);
@@ -841,7 +926,6 @@ impl ServicePilotBackend {
       ));
     }
     args.push("-DskipTests".to_string());
-    args.push("compile".to_string());
     args.push("dependency:build-classpath".to_string());
     args.push(format!("-Dmdep.outputFile={output_file}"));
     args.push(format!("-Dmdep.pathSeparator={}", classpath_separator()));
@@ -864,23 +948,26 @@ impl ServicePilotBackend {
       .map_err(|error| format!("Failed to prepare Java Main classpath: {error}"))?;
 
     if !output.status.success() {
-      let stdout = String::from_utf8_lossy(&output.stdout);
-      let stderr = String::from_utf8_lossy(&output.stderr);
+      let stdout = decode_process_output(&output.stdout);
+      let stderr = decode_process_output(&output.stderr);
       let details = [stdout.trim(), stderr.trim()]
         .into_iter()
         .filter(|value| !value.is_empty())
         .collect::<Vec<_>>()
         .join("\n");
       return Err(if details.is_empty() {
-        "Failed to prepare Java Main classpath with Maven.".to_string()
+        "Failed to build Java dependency classpath with Maven.".to_string()
       } else {
-        format!("Failed to prepare Java Main classpath with Maven.\n{details}")
+        format!("Failed to build Java dependency classpath with Maven.\n{details}")
       });
     }
 
-    let dependency_classpath = fs::read_to_string(&classpath_file)
-      .await
-      .map_err(|error| format!("Failed to read generated classpath file {}: {error}", classpath_file.display()))?;
+    let dependency_classpath = fs::read_to_string(&classpath_file).await.map_err(|error| {
+      format!(
+        "Failed to read generated classpath file {}: {error}",
+        classpath_file.display()
+      )
+    })?;
 
     let mut dependency_entries = Vec::new();
     dependency_entries.extend(
@@ -890,19 +977,18 @@ impl ServicePilotBackend {
         .filter(|entry| !entry.is_empty())
         .map(ToOwned::to_owned),
     );
+    let local_module_classes = find_local_maven_module_classes(working_dir).await?;
 
     let bootstrap_jar = launch_support_dir.join("servicepilot-classpath.jar");
     self
       .write_java_classpath_manifest_jar(&bootstrap_jar, &classes_dir, &dependency_entries, env)
       .await?;
 
-    Ok(
-      [
-        bootstrap_jar.to_string_lossy().to_string(),
-        classes_dir.to_string_lossy().to_string(),
-      ]
-      .join(classpath_separator()),
-    )
+    let mut classpath_entries = vec![classes_dir.to_string_lossy().to_string()];
+    classpath_entries.extend(local_module_classes);
+    classpath_entries.push(bootstrap_jar.to_string_lossy().to_string());
+
+    Ok(classpath_entries.join(classpath_separator()))
   }
 
   fn launch_support_dir(&self, working_dir: &str) -> BackendResult<PathBuf> {
@@ -943,9 +1029,12 @@ impl ServicePilotBackend {
     }
 
     let manifest = build_manifest_content(&manifest_entries);
-    fs::write(&manifest_file, manifest)
-      .await
-      .map_err(|error| format!("Failed to write manifest file {}: {error}", manifest_file.display()))?;
+    fs::write(&manifest_file, manifest).await.map_err(|error| {
+      format!(
+        "Failed to write manifest file {}: {error}",
+        manifest_file.display()
+      )
+    })?;
 
     let jar_command = resolve_jar_command(env);
     let launch = LaunchSpec {
@@ -967,8 +1056,8 @@ impl ServicePilotBackend {
       .map_err(|error| format!("Failed to build classpath manifest jar: {error}"))?;
 
     if !output.status.success() {
-      let stdout = String::from_utf8_lossy(&output.stdout);
-      let stderr = String::from_utf8_lossy(&output.stderr);
+      let stdout = decode_process_output(&output.stdout);
+      let stderr = decode_process_output(&output.stderr);
       let details = [stdout.trim(), stderr.trim()]
         .into_iter()
         .filter(|value| !value.is_empty())
@@ -986,10 +1075,20 @@ impl ServicePilotBackend {
 
   async fn get_log_history(&self, service_id: &str) -> BackendResult<Vec<LogEntry>> {
     let inner = self.inner.lock().await;
-    if !inner.services.iter().any(|service| service.id == service_id) {
+    if !inner
+      .services
+      .iter()
+      .any(|service| service.id == service_id)
+    {
       return Err("Service not found.".to_string());
     }
-    Ok(inner.log_history.get(service_id).cloned().unwrap_or_default())
+    Ok(
+      inner
+        .log_history
+        .get(service_id)
+        .cloned()
+        .unwrap_or_default(),
+    )
   }
 
   async fn save_service(&self, input: SaveServiceInput) -> BackendResult<ServiceConfig> {
@@ -1030,7 +1129,11 @@ impl ServicePilotBackend {
     self.stop_service(service_id).await.ok();
     {
       let mut inner = self.inner.lock().await;
-      if !inner.services.iter().any(|service| service.id == service_id) {
+      if !inner
+        .services
+        .iter()
+        .any(|service| service.id == service_id)
+      {
         return Err("Service not found.".to_string());
       }
       inner.services.retain(|service| service.id != service_id);
@@ -1128,7 +1231,8 @@ impl ServicePilotBackend {
         .ok_or_else(|| "Service not found.".to_string())?;
       if let Some(runtime) = inner.runtime.get(service_id) {
         if matches!(runtime.status, RuntimeStatus::Running)
-          || (matches!(runtime.status, RuntimeStatus::Starting) && inner.processes.contains_key(service_id))
+          || (matches!(runtime.status, RuntimeStatus::Starting)
+            && inner.processes.contains_key(service_id))
         {
           return Ok(());
         }
@@ -1141,13 +1245,23 @@ impl ServicePilotBackend {
       self
         .mark_project_preparing(service_id, "Preparing Java classpath...".to_string())
         .await;
-      self
-        .append_log(service_id, LogSource::System, "Preparing Java classpath...".to_string())
-        .await;
-      let classpath = self
+      let classpath = match self
         .build_idea_java_main_classpath(&service.working_dir, &settings, &service.env)
+        .await
+      {
+        Ok(classpath) => classpath,
+        Err(error) => {
+          self.append_log(service_id, LogSource::System, error).await;
+          let message = classpath_preparation_failed_message();
+          self
+            .mark_process_failed(service_id, message.clone(), FailureCategory::Compile)
+            .await;
+          return Err(message);
+        }
+      };
+      self
+        .update_service_classpath(service_id, classpath.clone())
         .await?;
-      self.update_service_classpath(service_id, classpath.clone()).await?;
       service.classpath = Some(classpath);
     }
 
@@ -1176,7 +1290,12 @@ impl ServicePilotBackend {
       );
     }
     self.emit_snapshot().await;
-    self.append_log(service_id, LogSource::System, format!("Launching: {}", launch.command_line))
+    self
+      .append_log(
+        service_id,
+        LogSource::System,
+        format!("Launching: {}", launch.command_line),
+      )
       .await;
 
     let (process_command, process_args) = prepare_spawn_command(&launch);
@@ -1205,12 +1324,9 @@ impl ServicePilotBackend {
 
     {
       let mut inner = self.inner.lock().await;
-      inner.processes.insert(
-        service_id.to_string(),
-        ManagedProcess {
-          pid,
-        },
-      );
+      inner
+        .processes
+        .insert(service_id.to_string(), ManagedProcess { pid });
       if let Some(runtime) = inner.runtime.get_mut(service_id) {
         // Spring Boot 服务保持 Starting 状态，直到检测到启动完成日志
         if matches!(service.service_kind, ServiceKind::Spring) {
@@ -1227,7 +1343,11 @@ impl ServicePilotBackend {
     }
     self.emit_snapshot().await;
     self
-      .append_log(service_id, LogSource::System, format!("Started with PID {}.", pid))
+      .append_log(
+        service_id,
+        LogSource::System,
+        format!("Started with PID {}.", pid),
+      )
       .await;
 
     let service_kind = service.service_kind.clone();
@@ -1235,18 +1355,27 @@ impl ServicePilotBackend {
       let backend = self.clone();
       let service_id = service_id.to_string();
       tauri::async_runtime::spawn(async move {
-        let mut lines = BufReader::new(stdout).lines();
-        while let Ok(Some(line)) = lines.next_line().await {
+        let mut reader = BufReader::new(stdout);
+        let mut bytes = Vec::new();
+        while let Ok(read) = reader.read_until(b'\n', &mut bytes).await {
+          if read == 0 {
+            break;
+          }
+          let line = decode_process_line(&bytes);
+          bytes.clear();
           // 检测 Spring Boot 启动完成标志
           if matches!(service_kind, ServiceKind::Spring) {
             let line_lower = line.to_lowercase();
             if (line_lower.contains("started") && line_lower.contains("application"))
               || (line_lower.contains("started") && line_lower.contains("umsp"))
-              || (line_lower.contains("started") && line_lower.contains("in")) {
+              || (line_lower.contains("started") && line_lower.contains("in"))
+            {
               backend.mark_service_running(&service_id).await;
             }
           }
-          backend.append_log(&service_id, LogSource::Stdout, line).await;
+          backend
+            .append_log(&service_id, LogSource::Stdout, line)
+            .await;
         }
       });
     }
@@ -1255,9 +1384,17 @@ impl ServicePilotBackend {
       let backend = self.clone();
       let service_id = service_id.to_string();
       tauri::async_runtime::spawn(async move {
-        let mut lines = BufReader::new(stderr).lines();
-        while let Ok(Some(line)) = lines.next_line().await {
-          backend.append_log(&service_id, LogSource::Stderr, line).await;
+        let mut reader = BufReader::new(stderr);
+        let mut bytes = Vec::new();
+        while let Ok(read) = reader.read_until(b'\n', &mut bytes).await {
+          if read == 0 {
+            break;
+          }
+          let line = decode_process_line(&bytes);
+          bytes.clear();
+          backend
+            .append_log(&service_id, LogSource::Stderr, line)
+            .await;
         }
       });
     }
@@ -1277,10 +1414,12 @@ impl ServicePilotBackend {
       return Ok(());
     }
 
-    let classes_dir = Path::new(&service.working_dir).join("target").join("classes");
+    let classes_dir = Path::new(&service.working_dir)
+      .join("target")
+      .join("classes");
     if fs::metadata(&classes_dir).await.is_err() {
       return Err(format!(
-        "Java Main launch requires compiled classes. Missing: {}. Run mvn compile first.",
+        "Java Main launch requires compiled classes. Missing: {}. Compile the project in IDEA or run mvn compile first.",
         classes_dir.display()
       ));
     }
@@ -1320,25 +1459,35 @@ impl ServicePilotBackend {
       .clone()
       .unwrap_or_else(|| default_java_classpath(&service.working_dir));
 
-    let uses_dependency_wildcard = split_classpath_entries(&classpath).into_iter().any(|entry| {
-      let normalized = entry.replace('\\', "/");
-      normalized.contains("target/dependency/") && normalized.ends_with('*')
-    });
+    if contains_servicepilot_classpath_cache(&classpath) {
+      return true;
+    }
+
+    let uses_dependency_wildcard = split_classpath_entries(&classpath)
+      .into_iter()
+      .any(|entry| {
+        let normalized = entry.replace('\\', "/");
+        normalized.contains("target/dependency/") && normalized.ends_with('*')
+      });
     if !uses_dependency_wildcard {
       return false;
     }
 
-    let classes_dir = Path::new(&service.working_dir).join("target").join("classes");
+    let classes_dir = Path::new(&service.working_dir)
+      .join("target")
+      .join("classes");
     if fs::metadata(&classes_dir).await.is_err() {
-      return true;
+      return false;
     }
 
-    split_classpath_entries(&classpath).into_iter().any(|entry| {
-      let normalized = entry.replace('\\', "/");
-      normalized.contains("target/dependency/")
-        && normalized.ends_with('*')
-        && !normalize_dependency_dir(entry).exists()
-    })
+    split_classpath_entries(&classpath)
+      .into_iter()
+      .any(|entry| {
+        let normalized = entry.replace('\\', "/");
+        normalized.contains("target/dependency/")
+          && normalized.ends_with('*')
+          && !normalize_dependency_dir(entry).exists()
+      })
   }
 
   async fn stop_service(&self, service_id: &str) -> BackendResult<()> {
@@ -1365,7 +1514,12 @@ impl ServicePilotBackend {
     };
 
     self.emit_snapshot().await;
-    self.append_log(service_id, LogSource::System, "Stopping service...".to_string())
+    self
+      .append_log(
+        service_id,
+        LogSource::System,
+        "Stopping service...".to_string(),
+      )
       .await;
     kill_process_tree(pid).await;
     Ok(())
@@ -1452,12 +1606,17 @@ impl ServicePilotBackend {
       }
     };
     let content = serde_json::to_string_pretty(&snapshot).map_err(|error| error.to_string())?;
-    fs::write(file_path, content).await.map_err(|error| error.to_string())
+    fs::write(file_path, content)
+      .await
+      .map_err(|error| error.to_string())
   }
 
   async fn import_state_from_file(&self, file_path: &Path) -> BackendResult<()> {
-    let content = fs::read_to_string(file_path).await.map_err(|error| error.to_string())?;
-    let parsed = serde_json::from_str::<PersistedState>(&content).map_err(|error| error.to_string())?;
+    let content = fs::read_to_string(file_path)
+      .await
+      .map_err(|error| error.to_string())?;
+    let parsed =
+      serde_json::from_str::<PersistedState>(&content).map_err(|error| error.to_string())?;
     self.validate_imported_state(&parsed).await?;
     self.shutdown().await?;
 
@@ -1521,7 +1680,10 @@ impl ServicePilotBackend {
       })
       .collect::<HashMap<_, _>>();
 
-    if matches!(input.service_kind, ServiceKind::Spring) && !has_env_key(&env, "JAVA_HOME") && !has_env_key(&env, "JDK_HOME") {
+    if matches!(input.service_kind, ServiceKind::Spring)
+      && !has_env_key(&env, "JAVA_HOME")
+      && !has_env_key(&env, "JDK_HOME")
+    {
       if let Some(java_home) = infer_project_java_home(Path::new(&working_dir)) {
         env.insert("JAVA_HOME".to_string(), java_home.clone());
         env.insert("JDK_HOME".to_string(), java_home);
@@ -1549,7 +1711,10 @@ impl ServicePilotBackend {
         .filter(|item| !item.is_empty())
         .collect(),
       port: input.port,
-      url: input.url.map(|value| value.trim().to_string()).filter(|value| !value.is_empty()),
+      url: input
+        .url
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty()),
       frontend_script: input
         .frontend_script
         .map(|value| value.trim().to_string())
@@ -1557,8 +1722,14 @@ impl ServicePilotBackend {
       maven_force_update: input.maven_force_update.unwrap_or(false),
       maven_debug_mode: input.maven_debug_mode.unwrap_or(false),
       maven_disable_fork: input.maven_disable_fork.unwrap_or(false),
-      main_class: input.main_class.map(|value| value.trim().to_string()).filter(|value| !value.is_empty()),
-      classpath: input.classpath.map(|value| value.trim().to_string()).filter(|value| !value.is_empty()),
+      main_class: input
+        .main_class
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty()),
+      classpath: input
+        .classpath
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty()),
       jvm_args: input
         .jvm_args
         .into_iter()
@@ -1574,12 +1745,21 @@ impl ServicePilotBackend {
     }
     match service.service_kind {
       ServiceKind::Spring => {
-        if !matches!(service.launch_type, LaunchType::Custom | LaunchType::Maven | LaunchType::JavaMain) {
-          return Err("Spring Boot services only support custom, maven, or java-main launch types.".to_string());
+        if !matches!(
+          service.launch_type,
+          LaunchType::Custom | LaunchType::Maven | LaunchType::JavaMain
+        ) {
+          return Err(
+            "Spring Boot services only support custom, maven, or java-main launch types."
+              .to_string(),
+          );
         }
       }
       ServiceKind::Vue => {
-        if !matches!(service.launch_type, LaunchType::Custom | LaunchType::VuePreset) {
+        if !matches!(
+          service.launch_type,
+          LaunchType::Custom | LaunchType::VuePreset
+        ) {
           return Err("Vue services only support custom or vue-preset launch types.".to_string());
         }
       }
@@ -1626,7 +1806,9 @@ impl ServicePilotBackend {
 
   async fn persist_state(&self) -> BackendResult<()> {
     if let Some(parent) = self.state_file.parent() {
-      fs::create_dir_all(parent).await.map_err(|error| error.to_string())?;
+      fs::create_dir_all(parent)
+        .await
+        .map_err(|error| error.to_string())?;
     }
 
     let snapshot = {
@@ -1640,7 +1822,9 @@ impl ServicePilotBackend {
     };
 
     let content = serde_json::to_string_pretty(&snapshot).map_err(|error| error.to_string())?;
-    fs::write(&self.state_file, content).await.map_err(|error| error.to_string())
+    fs::write(&self.state_file, content)
+      .await
+      .map_err(|error| error.to_string())
   }
 
   async fn read_state(&self) -> BackendResult<PersistedState> {
@@ -1700,7 +1884,9 @@ impl ServicePilotBackend {
             drop(inner);
             let _ = self.app.emit("log:entry", merged);
             self.detect_access_info(service_id, &text).await;
-            self.detect_failure_summary(service_id, &source, &text).await;
+            self
+              .detect_failure_summary(service_id, &source, &text)
+              .await;
             continue;
           }
         }
@@ -1713,7 +1899,9 @@ impl ServicePilotBackend {
 
       let _ = self.app.emit("log:entry", entry.clone());
       self.detect_access_info(service_id, &text).await;
-      self.detect_failure_summary(service_id, &source, &text).await;
+      self
+        .detect_failure_summary(service_id, &source, &text)
+        .await;
     }
   }
 
@@ -1787,11 +1975,17 @@ impl ServicePilotBackend {
       inner
         .log_history
         .get(service_id)
-        .map(|entries| entries.iter().any(|entry| matches!(entry.source, LogSource::System) && entry.text == text))
+        .map(|entries| {
+          entries
+            .iter()
+            .any(|entry| matches!(entry.source, LogSource::System) && entry.text == text)
+        })
         .unwrap_or(false)
     };
     if !exists {
-      self.append_log_entry(service_id, LogSource::System, text.to_string()).await;
+      self
+        .append_log_entry(service_id, LogSource::System, text.to_string())
+        .await;
     }
   }
 
@@ -1892,7 +2086,9 @@ impl ServicePilotBackend {
       Some(value) => format!("Process exited with code {value}."),
       None => "Process exited.".to_string(),
     };
-    self.append_log(service_id, LogSource::System, log_line).await;
+    self
+      .append_log(service_id, LogSource::System, log_line)
+      .await;
   }
 
   async fn mark_process_failed(
@@ -1913,7 +2109,11 @@ impl ServicePilotBackend {
     }
     self.emit_snapshot().await;
     self
-      .append_log(service_id, LogSource::System, format!("Failed to start: {message}"))
+      .append_log(
+        service_id,
+        LogSource::System,
+        format!("Failed to start: {message}"),
+      )
       .await;
   }
 
@@ -1931,10 +2131,16 @@ impl ServicePilotBackend {
       }
     }
     self.emit_snapshot().await;
-    self.append_log(service_id, LogSource::System, message).await;
+    self
+      .append_log(service_id, LogSource::System, message)
+      .await;
   }
 
-  async fn update_service_classpath(&self, service_id: &str, classpath: String) -> BackendResult<()> {
+  async fn update_service_classpath(
+    &self,
+    service_id: &str,
+    classpath: String,
+  ) -> BackendResult<()> {
     {
       let mut inner = self.inner.lock().await;
       let Some(service) = inner.services.iter_mut().find(|item| item.id == service_id) else {
@@ -1952,7 +2158,10 @@ impl ServicePilotBackend {
     inner
       .runtime
       .get(service_id)
-      .map(|runtime| matches!(runtime.status, RuntimeStatus::Starting) && !inner.processes.contains_key(service_id))
+      .map(|runtime| {
+        matches!(runtime.status, RuntimeStatus::Starting)
+          && !inner.processes.contains_key(service_id)
+      })
       .unwrap_or(false)
   }
 
@@ -1980,8 +2189,15 @@ impl ServicePilotBackend {
       if group.name.trim().is_empty() || !group_names.insert(group.name.clone()) {
         return Err("导入失败：分组名称为空或重复。".to_string());
       }
-      if let Some(invalid) = group.service_ids.iter().find(|service_id| !service_ids.contains(*service_id)) {
-        return Err(format!("导入失败：分组 {} 引用了不存在的服务 {}。", group.name, invalid));
+      if let Some(invalid) = group
+        .service_ids
+        .iter()
+        .find(|service_id| !service_ids.contains(*service_id))
+      {
+        return Err(format!(
+          "导入失败：分组 {} 引用了不存在的服务 {}。",
+          group.name, invalid
+        ));
       }
     }
 
@@ -2015,7 +2231,10 @@ async fn list_groups(state: State<'_, AppState>) -> BackendResult<Vec<ServiceGro
 }
 
 #[tauri::command]
-async fn get_log_history(state: State<'_, AppState>, service_id: String) -> BackendResult<Vec<LogEntry>> {
+async fn get_log_history(
+  state: State<'_, AppState>,
+  service_id: String,
+) -> BackendResult<Vec<LogEntry>> {
   state.backend.get_log_history(&service_id).await
 }
 
@@ -2030,12 +2249,18 @@ async fn save_settings(state: State<'_, AppState>, settings: AppSettings) -> Bac
 }
 
 #[tauri::command]
-async fn detect_project(state: State<'_, AppState>, project_dir: String) -> BackendResult<ProjectDetection> {
+async fn detect_project(
+  state: State<'_, AppState>,
+  project_dir: String,
+) -> BackendResult<ProjectDetection> {
   state.backend.detect_project(&project_dir).await
 }
 
 #[tauri::command]
-async fn save_service(state: State<'_, AppState>, input: SaveServiceInput) -> BackendResult<ServiceConfig> {
+async fn save_service(
+  state: State<'_, AppState>,
+  input: SaveServiceInput,
+) -> BackendResult<ServiceConfig> {
   state.backend.save_service(input).await
 }
 
@@ -2065,7 +2290,10 @@ async fn open_service_url(state: State<'_, AppState>, service_id: String) -> Bac
 }
 
 #[tauri::command]
-async fn save_group(state: State<'_, AppState>, input: SaveGroupInput) -> BackendResult<ServiceGroup> {
+async fn save_group(
+  state: State<'_, AppState>,
+  input: SaveGroupInput,
+) -> BackendResult<ServiceGroup> {
   state.backend.save_group(input).await
 }
 
@@ -2075,7 +2303,11 @@ async fn delete_group(state: State<'_, AppState>, group_id: String) -> BackendRe
 }
 
 #[tauri::command]
-async fn move_group(state: State<'_, AppState>, group_id: String, target_index: usize) -> BackendResult<()> {
+async fn move_group(
+  state: State<'_, AppState>,
+  group_id: String,
+  target_index: usize,
+) -> BackendResult<()> {
   state.backend.move_group(&group_id, target_index).await
 }
 
@@ -2090,7 +2322,11 @@ async fn stop_group(state: State<'_, AppState>, group_id: String) -> BackendResu
 }
 
 #[tauri::command]
-async fn pick_directory(app: AppHandle<Wry>, state: State<'_, AppState>, default_path: Option<String>) -> BackendResult<Option<String>> {
+async fn pick_directory(
+  app: AppHandle<Wry>,
+  state: State<'_, AppState>,
+  default_path: Option<String>,
+) -> BackendResult<Option<String>> {
   let language = state.backend.dialog_language().await;
   let title = match language {
     AppLanguage::ZhCn => "选择工作目录",
@@ -2130,7 +2366,11 @@ async fn pick_file(
     }
     if let Some(items) = filters {
       for filter in items {
-        let extensions = filter.extensions.iter().map(String::as_str).collect::<Vec<_>>();
+        let extensions = filter
+          .extensions
+          .iter()
+          .map(String::as_str)
+          .collect::<Vec<_>>();
         builder = builder.add_filter(&filter.name, &extensions);
       }
     }
@@ -2333,7 +2573,13 @@ fn resolve_runtime_url(service: &ServiceConfig, runtime: Option<&RuntimeState>) 
   runtime
     .and_then(|item| item.detected_url.clone())
     .or_else(|| service.url.clone())
-    .or_else(|| runtime.and_then(|item| item.detected_port.map(|port| format!("http://localhost:{port}"))))
+    .or_else(|| {
+      runtime.and_then(|item| {
+        item
+          .detected_port
+          .map(|port| format!("http://localhost:{port}"))
+      })
+    })
     .or_else(|| service.port.map(|port| format!("http://localhost:{port}")))
 }
 
@@ -2366,7 +2612,7 @@ fn extract_local_url(text: &str) -> Option<String> {
         .split_whitespace()
         .next()
         .unwrap_or_default()
-        .trim_end_matches(|ch: char| matches!(ch, '"' | '\'' | ',' | ';' | ')' | '/' ))
+        .trim_end_matches(|ch: char| matches!(ch, '"' | '\'' | ',' | ';' | ')' | '/'))
         .to_string()
     })
   })
@@ -2535,7 +2781,13 @@ fn classify_failure_insight(summary: &str) -> FailureInsight {
     (
       FailureCategory::Port,
       6,
-      &["Port ", "already in use", "Address already in use", "BindException", "Failed to bind"],
+      &[
+        "Port ",
+        "already in use",
+        "Address already in use",
+        "BindException",
+        "Failed to bind",
+      ],
     ),
     (
       FailureCategory::Plugin,
@@ -2557,7 +2809,12 @@ fn classify_failure_insight(summary: &str) -> FailureInsight {
     (
       FailureCategory::Compile,
       6,
-      &["COMPILATION ERROR", "Compilation failure", "cannot find symbol", "package "],
+      &[
+        "COMPILATION ERROR",
+        "Compilation failure",
+        "cannot find symbol",
+        "package ",
+      ],
     ),
     (
       FailureCategory::Config,
@@ -2633,7 +2890,13 @@ fn file_path_to_path(file_path: FilePath) -> Option<PathBuf> {
 fn to_command_line(command: &str, args: &[String]) -> String {
   std::iter::once(command.to_string())
     .chain(args.iter().cloned())
-    .map(|token| if token.contains(' ') { format!("\"{token}\"") } else { token })
+    .map(|token| {
+      if token.contains(' ') {
+        format!("\"{token}\"")
+      } else {
+        token
+      }
+    })
     .collect::<Vec<_>>()
     .join(" ")
 }
@@ -2658,8 +2921,13 @@ fn create_launch_spec(service: &ServiceConfig, settings: &AppSettings) -> Launch
         args.push("-s".to_string());
         args.push(settings.maven_settings_file.trim().to_string());
       }
-      if !has_maven_repo_override(&service.args) && !settings.maven_local_repository.trim().is_empty() {
-        args.push(format!("-Dmaven.repo.local={}", settings.maven_local_repository.trim()));
+      if !has_maven_repo_override(&service.args)
+        && !settings.maven_local_repository.trim().is_empty()
+      {
+        args.push(format!(
+          "-Dmaven.repo.local={}",
+          settings.maven_local_repository.trim()
+        ));
       }
       if service.maven_force_update {
         args.push("-U".to_string());
@@ -2679,13 +2947,19 @@ fn create_launch_spec(service: &ServiceConfig, settings: &AppSettings) -> Launch
       } else if !jvm_args.is_empty() {
         let jvm_args_str = jvm_args.join(" ");
         if jvm_args_str.contains(' ') {
-          args.push(format!("-Dspring-boot.run.jvmArguments=\"{}\"", jvm_args_str));
+          args.push(format!(
+            "-Dspring-boot.run.jvmArguments=\"{}\"",
+            jvm_args_str
+          ));
         } else {
           args.push(format!("-Dspring-boot.run.jvmArguments={}", jvm_args_str));
         }
       }
       if !service.profiles.is_empty() {
-        args.push(format!("-Dspring-boot.run.profiles={}", service.profiles.join(",")));
+        args.push(format!(
+          "-Dspring-boot.run.profiles={}",
+          service.profiles.join(",")
+        ));
       }
       if let Some(port) = service.port {
         args.push(format!("-Dspring-boot.run.arguments=--server.port={port}"));
@@ -2722,7 +2996,10 @@ fn create_launch_spec(service: &ServiceConfig, settings: &AppSettings) -> Launch
         args.push(main_class);
       }
       if !service.profiles.is_empty() {
-        args.push(format!("--spring.profiles.active={}", service.profiles.join(",")));
+        args.push(format!(
+          "--spring.profiles.active={}",
+          service.profiles.join(",")
+        ));
       }
       if let Some(port) = service.port {
         args.push(format!("--server.port={port}"));
@@ -2759,7 +3036,9 @@ fn create_launch_spec(service: &ServiceConfig, settings: &AppSettings) -> Launch
 }
 
 fn has_maven_flag(args: &[String], flag: &str) -> bool {
-  args.iter().any(|arg| arg == flag || arg.starts_with(&format!("{flag}=")))
+  args
+    .iter()
+    .any(|arg| arg == flag || arg.starts_with(&format!("{flag}=")))
 }
 
 fn has_maven_repo_override(args: &[String]) -> bool {
@@ -2790,7 +3069,9 @@ fn should_merge_log_line(previous: &LogEntry, entry: &LogEntry) -> bool {
   if previous.service_id != entry.service_id || matches!(previous.source, LogSource::System) {
     return false;
   }
-  if log_level(&previous.text, &previous.source) != "ERROR" && !matches!(previous.source, LogSource::Stderr) {
+  if log_level(&previous.text, &previous.source) != "ERROR"
+    && !matches!(previous.source, LogSource::Stderr)
+  {
     return false;
   }
 
@@ -2851,7 +3132,10 @@ fn log_level(text: &str, source: &LogSource) -> &'static str {
     return "SYSTEM";
   }
   for level in ["ERROR", "WARN", "INFO", "DEBUG", "TRACE"] {
-    if text.split(|ch: char| !ch.is_ascii_alphabetic()).any(|part| part == level) {
+    if text
+      .split(|ch: char| !ch.is_ascii_alphabetic())
+      .any(|part| part == level)
+    {
       return level;
     }
   }
@@ -2923,7 +3207,9 @@ fn extract_idea_spring_run_configs(content: &str) -> Vec<IdeaSpringRunConfig> {
     let block = &remainder[..block_end + "</configuration>".len()];
     offset = start + block_end + "</configuration>".len();
 
-    if extract_xml_attribute(header, "type").as_deref() != Some("SpringBootApplicationConfigurationType") {
+    if extract_xml_attribute(header, "type").as_deref()
+      != Some("SpringBootApplicationConfigurationType")
+    {
       continue;
     }
     if extract_xml_attribute(header, "default").as_deref() == Some("true") {
@@ -2963,10 +3249,14 @@ fn select_idea_run_config(
 ) -> Option<IdeaSpringRunConfig> {
   let selected_name = extract_component_selection(workspace_content);
 
-  configs
-    .iter()
-    .cloned()
-    .max_by_key(|config| score_idea_run_config(config, selected_name.as_deref(), selected_path, project_root))
+  configs.iter().cloned().max_by_key(|config| {
+    score_idea_run_config(
+      config,
+      selected_name.as_deref(),
+      selected_path,
+      project_root,
+    )
+  })
 }
 
 fn extract_component_selection(content: &str) -> Option<String> {
@@ -2989,7 +3279,9 @@ fn score_idea_run_config(
     }
   }
 
-  if let Some(module_dir) = resolve_idea_working_dir_lightweight(project_root, selected_path, config) {
+  if let Some(module_dir) =
+    resolve_idea_working_dir_lightweight(project_root, selected_path, config)
+  {
     if selected_path == module_dir {
       score += 300;
     } else if selected_path.starts_with(&module_dir) || module_dir.starts_with(selected_path) {
@@ -3047,7 +3339,9 @@ fn extract_module_name(content: &str) -> Option<String> {
 }
 
 fn extract_named_option_value(content: &str, names: &[&str]) -> Option<String> {
-  names.iter().find_map(|name| extract_xml_option_value(content, name))
+  names
+    .iter()
+    .find_map(|name| extract_xml_option_value(content, name))
 }
 
 fn extract_env_map(content: &str) -> HashMap<String, String> {
@@ -3213,9 +3507,15 @@ fn fallback_java_home(jdk_name: Option<&str>) -> Option<String> {
     std::env::var("JAVA_HOME8")
       .ok()
       .filter(|value| !value.trim().is_empty())
-      .or_else(|| std::env::var("JAVA_HOME").ok().filter(|value| !value.trim().is_empty()))
+      .or_else(|| {
+        std::env::var("JAVA_HOME")
+          .ok()
+          .filter(|value| !value.trim().is_empty())
+      })
   } else {
-    std::env::var("JAVA_HOME").ok().filter(|value| !value.trim().is_empty())
+    std::env::var("JAVA_HOME")
+      .ok()
+      .filter(|value| !value.trim().is_empty())
   }
 }
 
@@ -3234,7 +3534,10 @@ fn extract_idea_maven_settings(content: &str, project_root: &Path) -> AppSetting
 
 fn expand_idea_path(value: &str, project_root: Option<&Path>) -> String {
   let mut expanded = value.to_string();
-  if let Some(user_home) = std::env::var("USERPROFILE").ok().or_else(|| std::env::var("HOME").ok()) {
+  if let Some(user_home) = std::env::var("USERPROFILE")
+    .ok()
+    .or_else(|| std::env::var("HOME").ok())
+  {
     expanded = expanded.replace("$USER_HOME$", &user_home);
   }
   if let Some(root) = project_root {
@@ -3333,7 +3636,11 @@ fn extract_profiles_from_args(args: &[String]) -> Vec<String> {
     };
 
     if let Some(value) = value {
-      for profile in value.split(',').map(str::trim).filter(|item| !item.is_empty()) {
+      for profile in value
+        .split(',')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+      {
         if !profiles.iter().any(|existing| existing == profile) {
           profiles.push(profile.to_string());
         }
@@ -3448,7 +3755,11 @@ fn append_manifest_header(output: &mut String, name: &str, value: &str) {
 }
 
 fn find_idea_workspace(start: &Path) -> Option<PathBuf> {
-  let base = if start.is_file() { start.parent()? } else { start };
+  let base = if start.is_file() {
+    start.parent()?
+  } else {
+    start
+  };
   for current in base.ancestors() {
     let candidate = current.join(".idea").join("workspace.xml");
     if candidate.exists() {
@@ -3468,6 +3779,125 @@ fn default_java_classpath(working_dir: &str) -> String {
   .join(separator)
 }
 
+fn merge_managed_jvm_args(configured_args: &[String]) -> Vec<String> {
+  let mut args = vec!["-Dfile.encoding=UTF-8".to_string()];
+  args.extend(
+    configured_args
+      .iter()
+      .filter(|arg| !is_file_encoding_arg(arg))
+      .cloned(),
+  );
+  args
+}
+
+fn is_file_encoding_arg(arg: &str) -> bool {
+  arg
+    .trim()
+    .to_ascii_lowercase()
+    .starts_with("-dfile.encoding=")
+}
+
+fn contains_servicepilot_classpath_cache(classpath: &str) -> bool {
+  split_classpath_entries(classpath).into_iter().any(|entry| {
+    Path::new(entry)
+      .file_name()
+      .and_then(|name| name.to_str())
+      .map_or(false, |name| {
+        name.eq_ignore_ascii_case("servicepilot-classpath.jar")
+      })
+  })
+}
+
+async fn find_local_maven_module_classes(working_dir: &str) -> BackendResult<Vec<String>> {
+  let working_dir = Path::new(working_dir);
+  let pom_file = working_dir.join("pom.xml");
+  if fs::metadata(&pom_file).await.is_err() {
+    return Ok(Vec::new());
+  }
+
+  let pom = fs::read_to_string(&pom_file).await.map_err(|error| {
+    format!(
+      "Failed to read Maven project file {}: {error}",
+      pom_file.display()
+    )
+  })?;
+  let referenced_artifacts = extract_maven_artifact_ids(&pom);
+  if referenced_artifacts.is_empty() {
+    return Ok(Vec::new());
+  }
+
+  let Some(project_root) = working_dir.parent() else {
+    return Ok(Vec::new());
+  };
+  let mut entries = fs::read_dir(project_root).await.map_err(|error| {
+    format!(
+      "Failed to inspect local Maven modules {}: {error}",
+      project_root.display()
+    )
+  })?;
+  let mut class_dirs = Vec::new();
+
+  while let Some(entry) = entries
+    .next_entry()
+    .await
+    .map_err(|error| format!("Failed to inspect local Maven module entry: {error}"))?
+  {
+    let path = entry.path();
+    if path == working_dir || !path.is_dir() {
+      continue;
+    }
+
+    let module_pom = path.join("pom.xml");
+    if fs::metadata(&module_pom).await.is_err() {
+      continue;
+    }
+    let module_pom_content = match fs::read_to_string(&module_pom).await {
+      Ok(content) => content,
+      Err(_) => continue,
+    };
+    let Some(artifact_id) = extract_first_maven_artifact_id(&module_pom_content) else {
+      continue;
+    };
+    if !referenced_artifacts.contains(&artifact_id) {
+      continue;
+    }
+
+    let classes_dir = path.join("target").join("classes");
+    if fs::metadata(&classes_dir).await.is_ok() {
+      class_dirs.push(classes_dir.to_string_lossy().to_string());
+    }
+  }
+
+  class_dirs.sort();
+  Ok(class_dirs)
+}
+
+fn extract_maven_artifact_ids(pom: &str) -> HashSet<String> {
+  let mut artifact_ids = HashSet::new();
+  let mut remaining = pom;
+
+  while let Some(start) = remaining.find("<artifactId>") {
+    remaining = &remaining[start + "<artifactId>".len()..];
+    let Some(end) = remaining.find("</artifactId>") else {
+      break;
+    };
+    let artifact_id = remaining[..end].trim();
+    if !artifact_id.is_empty() {
+      artifact_ids.insert(artifact_id.to_string());
+    }
+    remaining = &remaining[end + "</artifactId>".len()..];
+  }
+
+  artifact_ids
+}
+
+fn extract_first_maven_artifact_id(pom: &str) -> Option<String> {
+  let start = pom.find("<artifactId>")? + "<artifactId>".len();
+  let end = pom[start..].find("</artifactId>")? + start;
+  let artifact_id = pom[start..end].trim();
+  (!artifact_id.is_empty()).then(|| artifact_id.to_string())
+}
+
 fn split_classpath_entries(classpath: &str) -> Vec<&str> {
   classpath
     .split(classpath_separator())
@@ -3477,7 +3907,11 @@ fn split_classpath_entries(classpath: &str) -> Vec<&str> {
 }
 
 fn normalize_dependency_dir(entry: &str) -> PathBuf {
-  let trimmed = entry.trim().trim_end_matches('*').trim_end_matches('\\').trim_end_matches('/');
+  let trimmed = entry
+    .trim()
+    .trim_end_matches('*')
+    .trim_end_matches('\\')
+    .trim_end_matches('/');
   PathBuf::from(trimmed)
 }
 
@@ -3520,7 +3954,11 @@ fn should_use_cmd_shell(command: &str) -> bool {
 
   let path = Path::new(normalized);
   match path.extension().and_then(|extension| extension.to_str()) {
-    Some(extension) if extension.eq_ignore_ascii_case("exe") || extension.eq_ignore_ascii_case("com") => false,
+    Some(extension)
+      if extension.eq_ignore_ascii_case("exe") || extension.eq_ignore_ascii_case("com") =>
+    {
+      false
+    }
     Some(_) => false,
     None => matches!(
       lower.as_str(),
@@ -3569,11 +4007,17 @@ fn validate_safe_launch_policy(service: &ServiceConfig) -> BackendResult<()> {
     executable.as_str(),
     "ssh" | "scp" | "sftp" | "ftp" | "rsync" | "kubectl" | "helm"
   ) {
-    return Err("Launch commands may not perform remote deployment or file transfer operations.".to_string());
+    return Err(
+      "Launch commands may not perform remote deployment or file transfer operations.".to_string(),
+    );
   }
 
   if is_maven_command(&service.command) {
-    if let Some(goal) = service.args.iter().find(|arg| is_disallowed_maven_goal(arg)) {
+    if let Some(goal) = service
+      .args
+      .iter()
+      .find(|arg| is_disallowed_maven_goal(arg))
+    {
       return Err(format!(
         "Blocked Maven goal `{goal}`. ServicePilot launch may not run install/deploy/release style Maven commands."
       ));
@@ -3581,7 +4025,11 @@ fn validate_safe_launch_policy(service: &ServiceConfig) -> BackendResult<()> {
   }
 
   if is_gradle_command(&service.command) {
-    if let Some(task) = service.args.iter().find(|arg| is_disallowed_gradle_task(arg)) {
+    if let Some(task) = service
+      .args
+      .iter()
+      .find(|arg| is_disallowed_gradle_task(arg))
+    {
       return Err(format!(
         "Blocked Gradle task `{task}`. ServicePilot launch may not run publish/release style Gradle commands."
       ));
@@ -3589,7 +4037,11 @@ fn validate_safe_launch_policy(service: &ServiceConfig) -> BackendResult<()> {
   }
 
   if is_node_package_manager_command(&service.command) {
-    if let Some(task) = service.args.iter().find(|arg| is_disallowed_node_package_manager_action(arg)) {
+    if let Some(task) = service
+      .args
+      .iter()
+      .find(|arg| is_disallowed_node_package_manager_action(arg))
+    {
       return Err(format!(
         "Blocked package manager action `{task}`. ServicePilot launch may not run install/publish/version style package commands."
       ));
@@ -3645,7 +4097,10 @@ fn is_gradle_command(command: &str) -> bool {
 }
 
 fn is_node_package_manager_command(command: &str) -> bool {
-  matches!(executable_stem(command).as_str(), "npm" | "pnpm" | "yarn" | "bun")
+  matches!(
+    executable_stem(command).as_str(),
+    "npm" | "pnpm" | "yarn" | "bun"
+  )
 }
 
 fn is_node_dev_command(command: &str) -> bool {
@@ -3694,13 +4149,16 @@ fn select_frontend_script(package: &PackageJson) -> Option<String> {
         .map(|_| (*script_name).to_string())
     })
     .or_else(|| {
-      package.scripts.iter().find_map(|(script_name, script_value)| {
-        if is_allowed_frontend_script(script_name, script_value) {
-          Some(script_name.clone())
-        } else {
-          None
-        }
-      })
+      package
+        .scripts
+        .iter()
+        .find_map(|(script_name, script_value)| {
+          if is_allowed_frontend_script(script_name, script_value) {
+            Some(script_name.clone())
+          } else {
+            None
+          }
+        })
     })
 }
 
@@ -3788,7 +4246,11 @@ fn has_frontend_port_arg(args: &[String]) -> bool {
 
 fn is_allowed_custom_launch_command(service: &ServiceConfig) -> bool {
   match service.service_kind {
-    ServiceKind::Spring => is_java_command(&service.command) || is_maven_command(&service.command) || is_gradle_command(&service.command),
+    ServiceKind::Spring => {
+      is_java_command(&service.command)
+        || is_maven_command(&service.command)
+        || is_gradle_command(&service.command)
+    }
     ServiceKind::Vue => {
       is_node_package_manager_command(&service.command) || is_node_dev_command(&service.command)
     }
@@ -3838,6 +4300,78 @@ fn now_iso_string() -> String {
   Utc::now().to_rfc3339()
 }
 
+fn decode_process_line(bytes: &[u8]) -> String {
+  let bytes = trim_line_end(bytes);
+  decode_process_output(bytes)
+}
+
+fn decode_process_output(bytes: &[u8]) -> String {
+  if let Ok(text) = std::str::from_utf8(bytes) {
+    return text.to_string();
+  }
+  decode_platform_ansi(bytes).unwrap_or_else(|| String::from_utf8_lossy(bytes).to_string())
+}
+
+fn classpath_preparation_failed_message() -> String {
+  "Failed to prepare Java classpath. See service logs for details.".to_string()
+}
+
+fn trim_line_end(mut bytes: &[u8]) -> &[u8] {
+  if bytes.ends_with(b"\n") {
+    bytes = &bytes[..bytes.len() - 1];
+  }
+  if bytes.ends_with(b"\r") {
+    bytes = &bytes[..bytes.len() - 1];
+  }
+  bytes
+}
+
+#[cfg(windows)]
+fn decode_platform_ansi(bytes: &[u8]) -> Option<String> {
+  use windows_sys::Win32::Globalization::{MultiByteToWideChar, CP_ACP};
+
+  if bytes.is_empty() {
+    return Some(String::new());
+  }
+
+  let input_len = i32::try_from(bytes.len()).ok()?;
+  let required = unsafe {
+    MultiByteToWideChar(
+      CP_ACP,
+      0,
+      bytes.as_ptr(),
+      input_len,
+      std::ptr::null_mut(),
+      0,
+    )
+  };
+  if required <= 0 {
+    return None;
+  }
+
+  let mut wide = vec![0u16; required as usize];
+  let written = unsafe {
+    MultiByteToWideChar(
+      CP_ACP,
+      0,
+      bytes.as_ptr(),
+      input_len,
+      wide.as_mut_ptr(),
+      required,
+    )
+  };
+  if written <= 0 {
+    return None;
+  }
+
+  Some(String::from_utf16_lossy(&wide[..written as usize]))
+}
+
+#[cfg(not(windows))]
+fn decode_platform_ansi(_bytes: &[u8]) -> Option<String> {
+  None
+}
+
 fn compute_elapsed_seconds(started_at: &str) -> Option<u64> {
   let started = chrono::DateTime::parse_from_rfc3339(started_at).ok()?;
   let elapsed = Utc::now().signed_duration_since(started.with_timezone(&Utc));
@@ -3866,7 +4400,12 @@ mod tests {
   use super::*;
   use serde_json::json;
 
-  fn service(launch_type: LaunchType, service_kind: ServiceKind, command: &str, args: &[&str]) -> ServiceConfig {
+  fn service(
+    launch_type: LaunchType,
+    service_kind: ServiceKind,
+    command: &str,
+    args: &[&str],
+  ) -> ServiceConfig {
     ServiceConfig {
       id: "service-1".to_string(),
       name: "service".to_string(),
@@ -3901,17 +4440,37 @@ mod tests {
 
   #[test]
   fn safe_launch_policy_allows_local_development_commands() {
-    let maven = service(LaunchType::Maven, ServiceKind::Spring, "mvn", &["spring-boot:run"]);
+    let maven = service(
+      LaunchType::Maven,
+      ServiceKind::Spring,
+      "mvn",
+      &["spring-boot:run"],
+    );
     assert!(validate_safe_launch_policy(&maven).is_ok());
 
-    let java = service(LaunchType::JavaMain, ServiceKind::Spring, "java", &["-cp", "target/classes", "com.example.Application"]);
+    let java = service(
+      LaunchType::JavaMain,
+      ServiceKind::Spring,
+      "java",
+      &["-cp", "target/classes", "com.example.Application"],
+    );
     assert!(validate_safe_launch_policy(&java).is_ok());
 
-    let mut npm = service(LaunchType::VuePreset, ServiceKind::Vue, "npm", &["run", "dev"]);
+    let mut npm = service(
+      LaunchType::VuePreset,
+      ServiceKind::Vue,
+      "npm",
+      &["run", "dev"],
+    );
     npm.frontend_script = Some("dev".to_string());
     assert!(validate_safe_launch_policy(&npm).is_ok());
 
-    let mut pnpm = service(LaunchType::VuePreset, ServiceKind::Vue, "pnpm", &["run", "dev"]);
+    let mut pnpm = service(
+      LaunchType::VuePreset,
+      ServiceKind::Vue,
+      "pnpm",
+      &["run", "dev"],
+    );
     pnpm.frontend_script = Some("dev".to_string());
     assert!(validate_safe_launch_policy(&pnpm).is_ok());
   }
@@ -3922,12 +4481,22 @@ mod tests {
       service(LaunchType::Custom, ServiceKind::Spring, "git", &["push"]),
       service(LaunchType::Maven, ServiceKind::Spring, "mvn", &["install"]),
       service(LaunchType::Maven, ServiceKind::Spring, "mvn", &["deploy"]),
-      service(LaunchType::Custom, ServiceKind::Spring, "gradle", &["publish"]),
+      service(
+        LaunchType::Custom,
+        ServiceKind::Spring,
+        "gradle",
+        &["publish"],
+      ),
       service(LaunchType::VuePreset, ServiceKind::Vue, "npm", &["install"]),
       service(LaunchType::VuePreset, ServiceKind::Vue, "npm", &["publish"]),
       service(LaunchType::Custom, ServiceKind::Vue, "kubectl", &["apply"]),
       service(LaunchType::Custom, ServiceKind::Vue, "ssh", &["host"]),
-      service(LaunchType::Custom, ServiceKind::Vue, "docker", &["push", "repo/image"]),
+      service(
+        LaunchType::Custom,
+        ServiceKind::Vue,
+        "docker",
+        &["push", "repo/image"],
+      ),
       service(LaunchType::Custom, ServiceKind::Vue, "docker", &["login"]),
     ];
 
@@ -3958,14 +4527,27 @@ mod tests {
 
     assert_eq!(launch.command, "mvn");
     assert!(launch.args.contains(&"-s".to_string()));
-    assert!(launch.args.contains(&"D:\\environment\\settings.xml".to_string()));
-    assert!(launch.args.contains(&"-Dmaven.repo.local=D:\\environment\\repository".to_string()));
+    assert!(launch
+      .args
+      .contains(&"D:\\environment\\settings.xml".to_string()));
+    assert!(launch
+      .args
+      .contains(&"-Dmaven.repo.local=D:\\environment\\repository".to_string()));
     assert!(launch.args.contains(&"-U".to_string()));
     assert!(launch.args.contains(&"spring-boot:run".to_string()));
-    assert!(launch.args.contains(&"-Dspring-boot.run.profiles=dev,local".to_string()));
-    assert!(launch.args.contains(&"-Dspring-boot.run.arguments=--server.port=8080".to_string()));
-    assert!(launch.args.contains(&"-Dspring-boot.run.fork=false".to_string()));
-    assert_eq!(launch.env.get("MAVEN_OPTS"), Some(&"-Dfile.encoding=UTF-8".to_string()));
+    assert!(launch
+      .args
+      .contains(&"-Dspring-boot.run.profiles=dev,local".to_string()));
+    assert!(launch
+      .args
+      .contains(&"-Dspring-boot.run.arguments=--server.port=8080".to_string()));
+    assert!(launch
+      .args
+      .contains(&"-Dspring-boot.run.fork=false".to_string()));
+    assert_eq!(
+      launch.env.get("MAVEN_OPTS"),
+      Some(&"-Dfile.encoding=UTF-8".to_string())
+    );
   }
 
   #[test]
@@ -3997,7 +4579,12 @@ mod tests {
 
   #[test]
   fn vue_preset_launch_spec_adds_script_args_and_port_env() {
-    let mut vue = service(LaunchType::VuePreset, ServiceKind::Vue, "pnpm", &["--", "--host", "127.0.0.1"]);
+    let mut vue = service(
+      LaunchType::VuePreset,
+      ServiceKind::Vue,
+      "pnpm",
+      &["--", "--host", "127.0.0.1"],
+    );
     vue.frontend_script = Some("dev".to_string());
     vue.port = Some(5173);
 
@@ -4056,16 +4643,24 @@ mod tests {
       Some("http://localhost:5173".to_string())
     );
     assert_eq!(
-      extract_url("Tomcat started on port(s): 8080 (http) with context path '' http://127.0.0.1:8080/api"),
+      extract_url(
+        "Tomcat started on port(s): 8080 (http) with context path '' http://127.0.0.1:8080/api"
+      ),
       Some("http://127.0.0.1:8080/api".to_string())
     );
-    assert_eq!(extract_port("Tomcat started on port(s): 8080 (http)"), Some(8080));
+    assert_eq!(
+      extract_port("Tomcat started on port(s): 8080 (http)"),
+      Some(8080)
+    );
     assert_eq!(extract_port("Local: http://localhost:5173/"), Some(5173));
   }
 
   #[test]
   fn log_parsing_ignores_unrelated_urls_and_ports() {
-    assert_eq!(extract_url("remote api available at https://example.com/service"), None);
+    assert_eq!(
+      extract_url("remote api available at https://example.com/service"),
+      None
+    );
     assert_eq!(extract_port("management.server.port=9001"), None);
   }
 }

@@ -937,25 +937,35 @@ function formatLogTime(value: string | undefined): string {
 }
 
 function getActionErrorMessage(error: unknown, fallback: string): string {
+  let message = '';
   if (error instanceof Error && error.message) {
-    return error.message;
-  }
-
-  if (typeof error === 'string' && error.trim()) {
-    return error;
-  }
-
-  if (error && typeof error === 'object') {
+    message = error.message;
+  } else if (typeof error === 'string' && error.trim()) {
+    message = error;
+  } else if (error && typeof error === 'object') {
     const candidates = ['message', 'error', 'cause'];
     for (const key of candidates) {
       const value = Reflect.get(error, key);
       if (typeof value === 'string' && value.trim()) {
-        return value;
+        message = value;
+        break;
       }
     }
   }
 
-  return fallback;
+  if (!message.trim()) {
+    return fallback;
+  }
+
+  const firstLine = message
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find(Boolean);
+  if (!firstLine) {
+    return fallback;
+  }
+
+  return firstLine.length > 140 ? `${firstLine.slice(0, 140)}...` : firstLine;
 }
 
 function getRuntime(snapshot: AppSnapshot, serviceId: string): RuntimeState {
@@ -1534,6 +1544,7 @@ export function App() {
   const deferredServiceSearch = useDeferredValue(serviceSearch.trim().toLowerCase());
   const deferredLogQuery = useDeferredValue(logQuery.trim().toLowerCase());
   const logStreamRef = useRef<HTMLDivElement | null>(null);
+  const autoScrollPausedBySearchRef = useRef(false);
   const logRowRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const registerLogRow = useCallback((id: string, node: HTMLDivElement | null) => {
     if (node) {
@@ -1684,6 +1695,8 @@ export function App() {
   const hasLogQuery = Boolean(deferredLogQuery);
   const logMatchCount = hasLogQuery ? filteredLogEntries.length : 0;
   const activeLogMatchEntryId = hasLogQuery ? filteredLogEntries[logMatchIndex]?.id : undefined;
+  const lastFilteredLogEntry = filteredLogEntries[filteredLogEntries.length - 1];
+  const logScrollSignal = lastFilteredLogEntry ? `${lastFilteredLogEntry.id}:${lastFilteredLogEntry.text.length}` : '';
   const logSearchStatusText = hasLogQuery
     ? logMatchCount
       ? `${Math.min(logMatchIndex + 1, logMatchCount)} / ${logMatchCount}`
@@ -1711,13 +1724,21 @@ export function App() {
     setLogQuery(value);
     setLogMatchIndex(0);
     if (value.trim() && autoScroll) {
+      autoScrollPausedBySearchRef.current = true;
       setAutoScroll(false);
+    } else if (!value.trim() && autoScrollPausedBySearchRef.current) {
+      autoScrollPausedBySearchRef.current = false;
+      setAutoScroll(true);
     }
   };
 
   const clearLogSearch = () => {
     setLogQuery('');
     setLogMatchIndex(0);
+    if (autoScrollPausedBySearchRef.current) {
+      autoScrollPausedBySearchRef.current = false;
+      setAutoScroll(true);
+    }
   };
 
   useEffect(() => {
@@ -1748,7 +1769,7 @@ export function App() {
       window.cancelAnimationFrame(frame);
       window.clearTimeout(timer);
     };
-  }, [activeNav, autoScroll, filteredLogEntries.length, selectedLogServiceId]);
+  }, [activeNav, autoScroll, logScrollSignal, selectedLogServiceId]);
 
   useLayoutEffect(() => {
     if (!activeLogMatchEntryId || !logStreamRef.current) {
@@ -2947,6 +2968,7 @@ export function App() {
                           checked={autoScroll}
                           onChange={(event) => {
                             const nextValue = event.target.checked;
+                            autoScrollPausedBySearchRef.current = false;
                             setAutoScroll(nextValue);
                             if (nextValue) {
                               requestAnimationFrame(() => {
