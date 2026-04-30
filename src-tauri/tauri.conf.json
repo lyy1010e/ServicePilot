@@ -1,7 +1,7 @@
 {
   "$schema": "./gen/schemas/desktop-schema.json",
   "productName": "ServicePilot",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "identifier": "com.servicepilot.desktop",
   "build": {
     "beforeDevCommand": "npm run dev:renderer",
@@ -30,6 +30,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -39,6 +40,17 @@
     "windows": {
       "wix": {
         "language": "zh-CN"
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDUxNjFDRjkyMjMyNDMwM0QKUldROU1DUWprczloVVNJNGhXRW9PT2UwK3pwZDE5emhPelpwbXV5VDVxdTJWeTlrdEJrS0ZyeGcK",
+      "endpoints": [
+        "https://github.com/lyy1010e/ServicePilot/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "basicUi"
       }
     }
   }

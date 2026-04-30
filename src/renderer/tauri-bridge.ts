@@ -1,6 +1,7 @@
 import type {
   AppSettings,
   AppSnapshot,
+  AppUpdateInfo,
   LogEntry,
   ProjectDetection,
   SaveGroupInput,
@@ -84,6 +85,9 @@ function extractErrorMessage(error: unknown, fallback: string): string {
 
 export function createServicePilotApi(): ServicePilotApi {
   return {
+    getAppVersion: () => invoke<string>('get_app_version'),
+    checkUpdate: () => invoke<AppUpdateInfo | null>('check_update'),
+    installUpdate: () => invoke<void>('install_update'),
     getSnapshot: () => invoke<AppSnapshot>('get_snapshot'),
     setLanguage: (language) => invoke<void>('set_language', { language }),
     saveSettings: (settings) => invoke<void>('save_settings', { settings: settings as AppSettings }),

@@ -3,6 +3,7 @@ import type {
   AppSettings,
   AppLanguage,
   AppSnapshot,
+  AppUpdateInfo,
   LogEntry,
   RuntimeState,
   SaveGroupInput,
@@ -20,8 +21,6 @@ import {
   parseProfiles,
   toggleValue
 } from './app-utils';
-
-const VERSION = 'v1.0.0';
 
 const EMPTY_SNAPSHOT: AppSnapshot = {
   services: [],
@@ -213,6 +212,15 @@ type Copy = {
   initFailed: string;
   actionFailed: string;
   logLoadFailed: string;
+  updateConfig: string;
+  updateConfigDesc: string;
+  currentVersion: string;
+  checkUpdate: string;
+  installUpdate: string;
+  updateAvailable: (version: string) => string;
+  updateNotAvailable: string;
+  updateInstalling: string;
+  updateInstallConfirm: (version: string) => string;
 };
 
 const COPY: Record<AppLanguage, Copy> = {
@@ -357,7 +365,16 @@ const COPY: Record<AppLanguage, Copy> = {
     ideaProjectStarted: '已添加项目，正在后台准备并启动。',
     initFailed: '初始化失败。',
     actionFailed: '操作失败。',
-    logLoadFailed: '读取日志失败。'
+    logLoadFailed: '读取日志失败。',
+    updateConfig: '应用更新',
+    updateConfigDesc: '通过签名校验的发布包更新 ServicePilot。',
+    currentVersion: '当前版本',
+    checkUpdate: '检查更新',
+    installUpdate: '下载并安装',
+    updateAvailable: (version) => `发现新版本 ${version}。`,
+    updateNotAvailable: '当前已经是最新版本。',
+    updateInstalling: '正在下载并安装更新，安装时应用可能会自动退出。',
+    updateInstallConfirm: (version) => `将下载并安装 ServicePilot ${version}，安装前会停止正在运行的服务。继续吗？`
   },
   'en-US': {
     appName: 'ServicePilot',
@@ -501,7 +518,16 @@ const COPY: Record<AppLanguage, Copy> = {
     ideaProjectStarted: 'Project added. Preparing and starting in the background.',
     initFailed: 'Initialization failed.',
     actionFailed: 'Action failed.',
-    logLoadFailed: 'Failed to load logs.'
+    logLoadFailed: 'Failed to load logs.',
+    updateConfig: 'App Updates',
+    updateConfigDesc: 'Update ServicePilot with signature-verified release packages.',
+    currentVersion: 'Current Version',
+    checkUpdate: 'Check for Updates',
+    installUpdate: 'Download and Install',
+    updateAvailable: (version) => `Version ${version} is available.`,
+    updateNotAvailable: 'You are already on the latest version.',
+    updateInstalling: 'Downloading and installing the update. The app may exit during installation.',
+    updateInstallConfirm: (version) => `Download and install ServicePilot ${version}? Running services will be stopped first.`
   }
 };
 
@@ -1512,6 +1538,8 @@ export function App() {
   const [feedback, setFeedback] = useState<FeedbackState>(null);
   const [busyKey, setBusyKey] = useState('');
   const [now, setNow] = useState(Date.now());
+  const [appVersion, setAppVersion] = useState('1.0.0');
+  const [updateInfo, setUpdateInfo] = useState<AppUpdateInfo | null>(null);
 
   const language = snapshot.settings.language;
   const copy = COPY[language];
@@ -1561,6 +1589,26 @@ export function App() {
 
     return () => {
       window.clearInterval(timer);
+    };
+  }, []);
+
+  useEffect(() => {
+    let disposed = false;
+    window.servicePilot
+      .getAppVersion()
+      .then((version) => {
+        if (!disposed) {
+          setAppVersion(version);
+        }
+      })
+      .catch(() => {
+        if (!disposed) {
+          setAppVersion('1.0.0');
+        }
+      });
+
+    return () => {
+      disposed = true;
     };
   }, []);
 
@@ -1941,6 +1989,31 @@ export function App() {
     });
   }
 
+  async function handleCheckUpdate() {
+    await runAction('check-update', async () => {
+      const nextUpdate = await window.servicePilot.checkUpdate();
+      setUpdateInfo(nextUpdate);
+      setFeedback({
+        message: nextUpdate ? copy.updateAvailable(nextUpdate.version) : copy.updateNotAvailable,
+        tone: 'success'
+      });
+    });
+  }
+
+  async function handleInstallUpdate() {
+    if (!updateInfo || !window.confirm(copy.updateInstallConfirm(updateInfo.version))) {
+      return;
+    }
+
+    await runAction('install-update', async () => {
+      setFeedback({
+        message: copy.updateInstalling,
+        tone: 'success'
+      });
+      await window.servicePilot.installUpdate();
+    });
+  }
+
   async function handlePickDirectory() {
     if (!serviceForm) {
       return;
@@ -2200,7 +2273,7 @@ export function App() {
           </div>
           <div className="pilot-brand__copy">
             <h1>{copy.appName}</h1>
-            <span className="pilot-brand__version">{VERSION}</span>
+            <span className="pilot-brand__version">v{appVersion}</span>
           </div>
         </div>
 
@@ -2237,12 +2310,7 @@ export function App() {
               aria-label="Close window"
               className="pilot-window-control pilot-window-control--close"
               data-no-window-drag
-              onClick={() => {
-                if (runtimeSummary.running > 0 && !window.confirm(copy.quitConfirm)) {
-                  return;
-                }
-                void window.servicePilot.closeWindow();
-              }}
+              onClick={() => void window.servicePilot.closeWindow()}
               title={language === 'zh-CN' ? '关闭' : 'Close'}
               type="button"
             >
@@ -2618,6 +2686,46 @@ export function App() {
                       <small>{copy.clearLogsOnRestartHint}</small>
                     </span>
                   </label>
+                </section>
+
+                <section className="pilot-settings-group">
+                  <div className="pilot-settings-section__heading">
+                    <div>
+                      <div className="pilot-settings-section__title">{copy.updateConfig}</div>
+                      <p>{copy.updateConfigDesc}</p>
+                    </div>
+                  </div>
+
+                  <div className="settings-update-panel">
+                    <div className="settings-update-panel__version">
+                      <span>{copy.currentVersion}</span>
+                      <strong>v{appVersion}</strong>
+                    </div>
+                    {updateInfo && (
+                      <div className="settings-update-panel__available">
+                        <strong>{copy.updateAvailable(updateInfo.version)}</strong>
+                        {updateInfo.notes && <small>{updateInfo.notes}</small>}
+                      </div>
+                    )}
+                    <div className="settings-update-panel__actions">
+                      <ActionButton
+                        compact
+                        disabled={busyKey === 'check-update' || busyKey === 'install-update'}
+                        icon="refresh"
+                        kind="default"
+                        label={copy.checkUpdate}
+                        onClick={() => void handleCheckUpdate()}
+                      />
+                      <ActionButton
+                        compact
+                        disabled={!updateInfo || busyKey === 'check-update' || busyKey === 'install-update'}
+                        icon="gear"
+                        kind="primary"
+                        label={copy.installUpdate}
+                        onClick={() => void handleInstallUpdate()}
+                      />
+                    </div>
+                  </div>
                 </section>
 
                 <div className="pilot-settings-actions">

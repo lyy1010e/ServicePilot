@@ -72,6 +72,9 @@ function createMockApi(initialSnapshot: AppSnapshot): ServicePilotApi {
     toggleMaximizeWindow: vi.fn().mockResolvedValue(undefined),
     startWindowDrag: vi.fn().mockResolvedValue(undefined),
     closeWindow: vi.fn().mockResolvedValue(undefined),
+    getAppVersion: vi.fn().mockResolvedValue('1.0.0'),
+    checkUpdate: vi.fn().mockResolvedValue(null),
+    installUpdate: vi.fn().mockResolvedValue(undefined),
     onSnapshot: vi.fn().mockReturnValue(vi.fn()),
     onLogEntry: vi.fn().mockReturnValue(vi.fn())
   };

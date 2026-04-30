@@ -1,6 +1,6 @@
 {
   "name": "service-pilot",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "description": "Desktop manager for local Spring Boot and Vue development services.",
   "scripts": {
@@ -9,6 +9,7 @@
     "build": "tauri build",
     "build:renderer": "vite build",
     "preview": "vite preview",
+    "release:manifest": "node scripts/generate-updater-manifest.mjs",
     "prepare": "husky",
     "lint": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
     "test:unit": "vitest run",

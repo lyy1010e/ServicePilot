@@ -104,11 +104,21 @@ export interface ProjectDetection {
   frontendScript?: string;
 }
 
+export interface AppUpdateInfo {
+  version: string;
+  currentVersion: string;
+  notes?: string | null;
+  date?: string | null;
+}
+
 export interface SaveGroupInput extends Omit<ServiceGroup, 'id'> {
   id?: string;
 }
 
 export interface ServicePilotApi {
+  getAppVersion: () => Promise<string>;
+  checkUpdate: () => Promise<AppUpdateInfo | null>;
+  installUpdate: () => Promise<void>;
   getSnapshot: () => Promise<AppSnapshot>;
   listServices: () => Promise<ServiceConfig[]>;
   listGroups: () => Promise<ServiceGroup[]>;

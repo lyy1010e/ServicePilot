@@ -5,14 +5,20 @@ use std::{
   sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
+    Mutex as StdMutex,
   },
 };
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, Manager, RunEvent, State, Window, Wry};
+use tauri::{
+  menu::{Menu, MenuItem, PredefinedMenuItem},
+  tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+  AppHandle, Emitter, Manager, RunEvent, State, Window, WindowEvent, Wry, RESTART_EXIT_CODE,
+};
 use tauri_plugin_dialog::{DialogExt, FilePath};
 use tauri_plugin_opener::OpenerExt;
+use tauri_plugin_updater::{Update, UpdaterExt};
 use tokio::{
   fs,
   io::{AsyncBufReadExt, BufReader},
@@ -23,12 +29,27 @@ use tokio::{
 
 const DATA_FILE: &str = "service-pilot-state.json";
 const MAX_LOG_ENTRIES: usize = 2000;
+const TRAY_SHOW_ID: &str = "tray-show";
+const TRAY_QUIT_ID: &str = "tray-quit";
 
 type BackendResult<T> = Result<T, String>;
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AppUpdateInfo {
+  version: String,
+  current_version: String,
+  notes: Option<String>,
+  date: Option<String>,
+}
 
 #[derive(Clone)]
 struct AppState {
   backend: Arc<ServicePilotBackend>,
+}
+
+struct UpdateState {
+  pending: StdMutex<Option<Update>>,
 }
 
 #[derive(Clone)]
@@ -2471,6 +2492,64 @@ async fn shutdown(state: State<'_, AppState>) -> BackendResult<()> {
 }
 
 #[tauri::command]
+fn get_app_version(app: AppHandle<Wry>) -> String {
+  app.package_info().version.to_string()
+}
+
+fn update_to_info(update: &Update) -> AppUpdateInfo {
+  AppUpdateInfo {
+    version: update.version.clone(),
+    current_version: update.current_version.clone(),
+    notes: update.body.clone(),
+    date: update.date.map(|date| date.to_string()),
+  }
+}
+
+#[tauri::command]
+async fn check_update(
+  app: AppHandle<Wry>,
+  update_state: State<'_, UpdateState>,
+) -> BackendResult<Option<AppUpdateInfo>> {
+  let update = app
+    .updater()
+    .map_err(|error| error.to_string())?
+    .check()
+    .await
+    .map_err(|error| error.to_string())?;
+  let info = update.as_ref().map(update_to_info);
+  let mut pending = update_state
+    .pending
+    .lock()
+    .map_err(|_| "Failed to lock update state.".to_string())?;
+  *pending = update;
+  Ok(info)
+}
+
+#[tauri::command]
+async fn install_update(
+  app: AppHandle<Wry>,
+  state: State<'_, AppState>,
+  update_state: State<'_, UpdateState>,
+) -> BackendResult<()> {
+  let update = {
+    let mut pending = update_state
+      .pending
+      .lock()
+      .map_err(|_| "Failed to lock update state.".to_string())?;
+    pending
+      .take()
+      .ok_or_else(|| "No verified update is pending. Check for updates first.".to_string())?
+  };
+
+  state.backend.shutdown().await?;
+  update
+    .download_and_install(|_, _| {}, || {})
+    .await
+    .map_err(|error| error.to_string())?;
+  app.restart();
+}
+
+#[tauri::command]
 fn minimize_window(window: Window) -> BackendResult<()> {
   window.minimize().map_err(|error| error.to_string())
 }
@@ -2491,16 +2570,78 @@ fn start_window_drag(window: Window) -> BackendResult<()> {
 
 #[tauri::command]
 fn close_window(window: Window) -> BackendResult<()> {
-  window.close().map_err(|error| error.to_string())
+  window.hide().map_err(|error| error.to_string())
+}
+
+fn show_main_window(app_handle: &AppHandle<Wry>) {
+  if let Some(window) = app_handle.get_webview_window("main") {
+    let _ = window.show();
+    let _ = window.unminimize();
+    let _ = window.set_focus();
+  }
+}
+
+fn shutdown_and_exit(app_handle: &AppHandle<Wry>, exit_guard: &Arc<AtomicBool>) {
+  if exit_guard.swap(true, Ordering::SeqCst) {
+    return;
+  }
+
+  let state = app_handle.state::<AppState>().backend.clone();
+  let handle = app_handle.clone();
+  tauri::async_runtime::spawn(async move {
+    state.shutdown().await.ok();
+    handle.exit(0);
+  });
+}
+
+fn setup_tray(app: &tauri::App<Wry>, exit_guard: Arc<AtomicBool>) -> tauri::Result<()> {
+  let show_item = MenuItem::with_id(app, TRAY_SHOW_ID, "Open ServicePilot", true, None::<&str>)?;
+  let separator = PredefinedMenuItem::separator(app)?;
+  let quit_item = MenuItem::with_id(app, TRAY_QUIT_ID, "Quit", true, None::<&str>)?;
+  let menu = Menu::with_items(app, &[&show_item, &separator, &quit_item])?;
+
+  let mut tray = TrayIconBuilder::with_id("main")
+    .menu(&menu)
+    .tooltip("ServicePilot")
+    .show_menu_on_left_click(false)
+    .on_menu_event({
+      let exit_guard = exit_guard.clone();
+      move |app_handle, event| match event.id().as_ref() {
+        TRAY_SHOW_ID => show_main_window(app_handle),
+        TRAY_QUIT_ID => shutdown_and_exit(app_handle, &exit_guard),
+        _ => {}
+      }
+    })
+    .on_tray_icon_event(|tray, event| match event {
+      TrayIconEvent::Click {
+        button: MouseButton::Left,
+        button_state: MouseButtonState::Up,
+        ..
+      }
+      | TrayIconEvent::DoubleClick {
+        button: MouseButton::Left,
+        ..
+      } => show_main_window(tray.app_handle()),
+      _ => {}
+    });
+
+  if let Some(icon) = app.default_window_icon().cloned() {
+    tray = tray.icon(icon);
+  }
+
+  tray.build(app)?;
+  Ok(())
 }
 
 pub fn run() {
   let exit_guard = Arc::new(AtomicBool::new(false));
+  let setup_exit_guard = exit_guard.clone();
 
   let builder = tauri::Builder::default()
     .plugin(tauri_plugin_dialog::init())
     .plugin(tauri_plugin_opener::init())
-    .setup(|app| {
+    .plugin(tauri_plugin_updater::Builder::new().build())
+    .setup(move |app| {
       let app_handle = app.handle().clone();
       let backend = tauri::async_runtime::block_on(ServicePilotBackend::new(app_handle))
         .unwrap_or_else(|error| panic!("failed to initialize backend: {error}"));
@@ -2509,9 +2650,16 @@ pub fn run() {
       app.manage(AppState {
         backend: Arc::new(backend),
       });
+      app.manage(UpdateState {
+        pending: StdMutex::new(None),
+      });
+      setup_tray(app, setup_exit_guard.clone())?;
       Ok(())
     })
     .invoke_handler(tauri::generate_handler![
+      get_app_version,
+      check_update,
+      install_update,
       get_snapshot,
       list_services,
       list_groups,
@@ -2552,18 +2700,35 @@ pub fn run() {
   app.run({
     let exit_guard = exit_guard.clone();
     move |app_handle, event| {
-      if let RunEvent::ExitRequested { api, .. } = event {
-        if exit_guard.swap(true, Ordering::SeqCst) {
-          return;
+      match event {
+        RunEvent::WindowEvent {
+          label,
+          event: WindowEvent::CloseRequested { api, .. },
+          ..
+        } if label == "main" => {
+          api.prevent_close();
+          if let Some(window) = app_handle.get_webview_window("main") {
+            let _ = window.hide();
+          }
         }
+        RunEvent::ExitRequested {
+          code: Some(RESTART_EXIT_CODE),
+          ..
+        } => {}
+        RunEvent::ExitRequested { api, .. } => {
+          if exit_guard.swap(true, Ordering::SeqCst) {
+            return;
+          }
 
-        api.prevent_exit();
-        let state = app_handle.state::<AppState>().backend.clone();
-        let handle = app_handle.clone();
-        tauri::async_runtime::spawn(async move {
-          state.shutdown().await.ok();
-          handle.exit(0);
-        });
+          api.prevent_exit();
+          let state = app_handle.state::<AppState>().backend.clone();
+          let handle = app_handle.clone();
+          tauri::async_runtime::spawn(async move {
+            state.shutdown().await.ok();
+            handle.exit(0);
+          });
+        }
+        _ => {}
       }
     }
   });
