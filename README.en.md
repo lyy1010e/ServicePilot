@@ -95,7 +95,23 @@ Before publishing:
 
 - Install and authenticate GitHub CLI: `gh auth login`
 - Keep the working tree clean
-- Set the Tauri updater signing private key environment variable, such as `TAURI_SIGNING_PRIVATE_KEY`
+- Configure the Tauri updater signing private key on this machine
+
+Recommended local `.env.release.local` file, which is ignored by `.gitignore`:
+
+```ini
+TAURI_SIGNING_PRIVATE_KEY_FILE=secrets/tauri-signing.key
+# If the key has a password:
+# TAURI_SIGNING_PRIVATE_KEY_PASSWORD=your-password
+```
+
+Then put the private key content in:
+
+```text
+secrets/tauri-signing.key
+```
+
+You can also set `TAURI_SIGNING_PRIVATE_KEY=...` directly in `.env.release.local`, but the file path form is recommended to avoid escaping multiline keys.
 
 Preview the commands first:
 

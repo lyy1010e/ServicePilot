@@ -95,7 +95,23 @@ npm run release:update
 
 - 已安装并登录 GitHub CLI：`gh auth login`
 - 当前工作区没有未提交改动
-- 已配置 Tauri updater 签名私钥环境变量，例如 `TAURI_SIGNING_PRIVATE_KEY`
+- 已在本机配置 Tauri updater 签名私钥
+
+推荐创建本地文件 `.env.release.local`，该文件已被 `.gitignore` 忽略：
+
+```ini
+TAURI_SIGNING_PRIVATE_KEY_FILE=secrets/tauri-signing.key
+# 如果私钥有密码：
+# TAURI_SIGNING_PRIVATE_KEY_PASSWORD=your-password
+```
+
+然后把私钥内容放到：
+
+```text
+secrets/tauri-signing.key
+```
+
+也可以直接在 `.env.release.local` 里写 `TAURI_SIGNING_PRIVATE_KEY=...`，但更推荐使用文件路径，避免多行私钥转义问题。
 
 可以先预演命令：
 

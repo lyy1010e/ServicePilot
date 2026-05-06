@@ -14,6 +14,8 @@ if (args.has('--help') || args.has('-h')) {
   process.exit(0);
 }
 
+await loadLocalReleaseEnv();
+
 const tauriConfig = JSON.parse(await readFile(path.join(root, 'src-tauri', 'tauri.conf.json'), 'utf8'));
 const packageJson = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
 const cargoToml = await readFile(path.join(root, 'src-tauri', 'Cargo.toml'), 'utf8');
@@ -30,7 +32,9 @@ const artifacts = [
 assertVersionSync(version, packageJson.version, cargoToml);
 
 if (!dryRun && !skipBuild && !process.env.TAURI_SIGNING_PRIVATE_KEY) {
-  throw new Error('TAURI_SIGNING_PRIVATE_KEY is required before building updater artifacts.');
+  throw new Error(
+    'TAURI_SIGNING_PRIVATE_KEY is required before building updater artifacts. Set it in the shell or in .env.release.local.'
+  );
 }
 
 await run('git', ['diff', '--quiet']);
@@ -81,6 +85,61 @@ function assertVersionSync(tauriVersion, npmVersion, cargoText) {
   }
 }
 
+async function loadLocalReleaseEnv() {
+  const envPath = path.join(root, '.env.release.local');
+  let envText = '';
+  try {
+    envText = await readFile(envPath, 'utf8');
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      return;
+    }
+    throw error;
+  }
+
+  for (const line of envText.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) {
+      continue;
+    }
+
+    const equalsIndex = trimmed.indexOf('=');
+    if (equalsIndex < 1) {
+      continue;
+    }
+
+    const key = trimmed.slice(0, equalsIndex).trim();
+    const value = unquoteEnvValue(trimmed.slice(equalsIndex + 1).trim());
+    if (!process.env[key]) {
+      process.env[key] = value;
+    }
+  }
+
+  await loadEnvFileValue('TAURI_SIGNING_PRIVATE_KEY', 'TAURI_SIGNING_PRIVATE_KEY_FILE');
+  await loadEnvFileValue('TAURI_SIGNING_PRIVATE_KEY_PASSWORD', 'TAURI_SIGNING_PRIVATE_KEY_PASSWORD_FILE');
+}
+
+async function loadEnvFileValue(targetKey, fileKey) {
+  if (process.env[targetKey] || !process.env[fileKey]) {
+    return;
+  }
+
+  const filePath = path.isAbsolute(process.env[fileKey])
+    ? process.env[fileKey]
+    : path.join(root, process.env[fileKey]);
+  process.env[targetKey] = (await readFile(filePath, 'utf8')).trim();
+}
+
+function unquoteEnvValue(value) {
+  if (
+    (value.startsWith('"') && value.endsWith('"')) ||
+    (value.startsWith("'") && value.endsWith("'"))
+  ) {
+    return value.slice(1, -1);
+  }
+  return value;
+}
+
 async function commandSucceeds(command, commandArgs) {
   try {
     await run(command, commandArgs, { quiet: true });
@@ -127,7 +186,7 @@ the GitHub release for the current tauri.conf.json version.
 
 Requirements:
   - GitHub CLI authenticated with access to ${repository}
-  - TAURI_SIGNING_PRIVATE_KEY set when building artifacts
+  - TAURI_SIGNING_PRIVATE_KEY set in the shell or .env.release.local when building artifacts
 
 Options:
   --dry-run     Print commands without running them
