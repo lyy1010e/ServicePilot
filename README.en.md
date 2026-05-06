@@ -1,28 +1,37 @@
 # ServicePilot
 
+[![Test](https://github.com/lyy1010e/ServicePilot/actions/workflows/test.yml/badge.svg)](https://github.com/lyy1010e/ServicePilot/actions/workflows/test.yml)
+
 [中文](README.md) | [English](README.en.md)
 
-ServicePilot is a Windows-first desktop workbench for local development startup and process observation. It manages local development projects and services from one desktop console.
+ServicePilot is a Windows-first desktop workbench for starting, stopping, and observing local development projects. It keeps Spring Boot and Vue/Rust frontend dev services in one console, so local multi-service debugging does not have to be split across many terminals and scattered logs.
 
-ServicePilot is intentionally scoped to local development. It does not deploy, publish, or run source-control operations as part of launch, stop, import, or restart flows.
+ServicePilot has a strict local-development boundary: launch, stop, import, and restart flows must not run Git operations, publish artifacts, or deploy anything to remote systems.
 
-## Features
+## Design Goals
 
-- Manage multiple local development projects and services in one desktop app
-- Provide built-in presets for common local startup scenarios such as `Spring Boot`, Java Main, Maven projects, and frontend dev servers
-- Support `maven`, `java-main`, `vue-preset`, and guarded `custom` launch types
-- Start, stop, and restart single services
-- Create service groups and start or stop them in batches
-- Stream real-time logs and keep recent in-memory log history per service
-- Search logs with match count, previous/next navigation, current-match focus, and log-level filtering
-- Configure global Maven `settings.xml` and local repository paths
-- Clear a service's old logs before restart; enabled by default
-- Import local IDEA/Maven project settings and import/export app-owned configuration
-- Detect local ports and access URLs from startup logs
-- Switch the app UI between Chinese and English
-- Use native file and folder pickers for path selection
+- Make local multi-service debugging lighter: one desktop window for services, groups, logs, and runtime state.
+- Keep launches predictable: prefer built-in presets, and validate guarded custom commands in the backend.
+- Avoid mutating user projects: app-owned state is stored in ServicePilot's own data directory, not in source-controlled project files.
+- Work well for Chinese and English development environments: the UI can switch languages, and Maven, IDEA projects, and Windows process management are first-class scenarios.
+- Keep updates simple: signed updater packages can be checked and applied from the version badge when a new version is available.
 
-## Local-Only Safety Boundary
+## Highlights
+
+- Manage local `Spring Boot` and `Vue/Rust` frontend dev services in one desktop app.
+- Support `maven`, `java-main`, `vue-preset`, and guarded `custom` launch types.
+- Start, stop, and restart single services, plus batch start/stop by group.
+- Organize related services into groups for domain-based or debugging-session workflows.
+- Stream real-time logs, keep recent logs per service, search logs, jump between matches, and filter by log level.
+- Optionally clear a service's old logs before starting or restarting it.
+- Read IDEA/Maven project settings and provide a quick "select project and start" flow.
+- Configure global Maven `settings.xml` and local repository paths.
+- Detect ports and access URLs from startup logs.
+- Import and export ServicePilot-owned local configuration.
+- Switch the app UI between Chinese and English.
+- Package with Tauri 2 on Windows, including tray support, custom window controls, and local process management.
+
+## Safety Boundary
 
 ServicePilot launch flows are only for local development.
 
@@ -34,45 +43,104 @@ Allowed startup examples:
 - `npm run dev`
 - `pnpm dev`
 
-Commands that should not run during launch, stop, import, or restart flows:
+Launch, stop, import, and restart flows should not run:
 
 - Git operations such as `git push`, `git pull`, or `git commit`
 - Maven `install`, `deploy`, release goals, or Gradle publish/release tasks
-- Package mutation or publishing commands such as `npm install`, `npm publish`, `npm version`, or `pnpm add`
-- Remote deployment or mutation commands such as `kubectl`, `helm`, `ssh`, `scp`, `rsync`, or `docker push`
+- Package install, version, or publish commands such as `npm install`, `npm publish`, `npm version`, or `pnpm add`
+- Remote deployment or mutation commands such as `kubectl`, `helm`, `ssh`, `scp`, or `rsync`
+- Registry publish or login commands such as `docker push` or `docker login`
 
-App-owned state is written to the application data directory, not to user project source files.
+## How To Use
+
+1. Start the app and click "Select Project & Start". Pick a local IDEA/Maven or frontend project directory, and ServicePilot will try to detect the project type and create a service.
+2. Or click "Add Service" to manually configure the service name, working directory, launch type, arguments, port, environment variables, and related fields.
+3. Use the home service list to start, stop, or restart services, and monitor status, port, runtime, and last start time.
+4. Select a service in the log panel to view real-time output, search logs, filter levels, or clear the current service log manually.
+5. Use "Group Workspace" to create groups and batch start or stop related services.
+6. Use Settings to configure Maven `settings.xml`, the local repository path, and whether old logs should be cleared before start/restart.
+7. Use the language switch in the top-right corner to switch between Chinese and English.
+8. When a signed update is available, an update icon appears next to the version badge on the home screen.
+
+## Local Development
+
+### Requirements
+
+- Node.js
+- Rust toolchain with Cargo
+- Windows WebView2 Runtime
+
+### Common Scripts
+
+```bash
+npm install
+npm run dev
+npm run lint
+npm run test:unit
+npm run test:rust
+npm run test
+npm run build:renderer
+npm run build
+```
+
+### Publish Updates
+
+```bash
+npm run release:update
+```
+
+This command builds signed installer artifacts, generates the updater `latest.json`, and creates or updates the GitHub Release for the current app version through GitHub CLI.
+
+Before publishing:
+
+- Install and authenticate GitHub CLI: `gh auth login`
+- Keep the working tree clean
+- Configure the Tauri updater signing private key on this machine
+
+Recommended local `.env.release.local` file, which is ignored by `.gitignore`:
+
+```ini
+TAURI_SIGNING_PRIVATE_KEY_FILE=secrets/tauri-signing.key
+# If the key has a password:
+# TAURI_SIGNING_PRIVATE_KEY_PASSWORD=your-password
+```
+
+Then put the private key content in:
+
+```text
+secrets/tauri-signing.key
+```
+
+You can also set `TAURI_SIGNING_PRIVATE_KEY=...` directly in `.env.release.local`, but the file path form is recommended to avoid escaping multiline keys.
+
+Preview the commands first:
+
+```bash
+npm run release:update -- --dry-run
+```
+
+If artifacts are already built, regenerate the manifest and upload only:
+
+```bash
+npm run release:update -- --skip-build
+```
+
+Generate the updater manifest manually:
+
+```bash
+npm run release:manifest
+```
 
 ## Tech Stack
 
 - Desktop host: `Tauri 2`
 - Frontend: `React 19 + TypeScript + Vite 7`
-- Desktop backend: `Rust + Tokio`
+- Backend: `Rust + Tokio`
+- Tests: `Vitest` and Rust unit tests
 
-## Local Requirements
+## Data And Limits
 
-- `Node.js`
-- `Rust` toolchain with `cargo`
-- WebView2 Runtime on Windows
+- Local app state is persisted under the application data directory as `service-pilot-state.json`.
+- Runtime log history is kept in memory and capped per service.
+- The backend is currently optimized for Windows process management semantics.
 
-## Development Scripts
-
-```bash
-npm install
-npm run lint
-npm run build:renderer
-npm run dev
-npm run build
-```
-
-## Settings
-
-- Maven Settings: global `settings.xml` path reused by Maven preset services
-- Local Repository: global Maven local repository override
-- Clear logs on restart: enabled by default; clears that service's old logs before writing new stop/start output
-
-## Notes
-
-- Local state is persisted under the app data directory as `service-pilot-state.json`
-- Runtime log history is kept in memory and capped per service
-- The desktop backend is currently optimized for Windows process management semantics

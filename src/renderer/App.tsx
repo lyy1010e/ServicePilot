@@ -212,13 +212,8 @@ type Copy = {
   initFailed: string;
   actionFailed: string;
   logLoadFailed: string;
-  updateConfig: string;
-  updateConfigDesc: string;
-  currentVersion: string;
-  checkUpdate: string;
   installUpdate: string;
   updateAvailable: (version: string) => string;
-  updateNotAvailable: string;
   updateInstalling: string;
   updateInstallConfirm: (version: string) => string;
 };
@@ -346,8 +341,8 @@ const COPY: Record<AppLanguage, Copy> = {
     mavenConfig: 'Maven 全局配置',
     mavenConfigDesc: '统一设置 Maven 的 settings.xml 和本地仓库路径，供所有 Maven 预设服务复用。',
     logConfig: '日志配置',
-    clearLogsOnRestart: '重启服务时清空旧日志',
-    clearLogsOnRestartHint: '开启后点击重启会先清空该服务旧日志，再写入新的停止和启动日志。',
+    clearLogsOnRestart: '启动或重启服务前清空旧日志',
+    clearLogsOnRestartHint: '开启后点击启动或重启会先清空该服务旧日志，再写入新的启动日志。',
     otherConfig: '其他',
     otherConfigHint: '其他系统相关设置（更多配置项将陆续支持）',
     advancedConfigManual: '更多高级配置，请在配置文件中手动修改。',
@@ -366,15 +361,10 @@ const COPY: Record<AppLanguage, Copy> = {
     initFailed: '初始化失败。',
     actionFailed: '操作失败。',
     logLoadFailed: '读取日志失败。',
-    updateConfig: '应用更新',
-    updateConfigDesc: '通过签名校验的发布包更新 ServicePilot。',
-    currentVersion: '当前版本',
-    checkUpdate: '检查更新',
-    installUpdate: '下载并安装',
+    installUpdate: '立即更新',
     updateAvailable: (version) => `发现新版本 ${version}。`,
-    updateNotAvailable: '当前已经是最新版本。',
-    updateInstalling: '正在下载并安装更新，安装时应用可能会自动退出。',
-    updateInstallConfirm: (version) => `将下载并安装 ServicePilot ${version}，安装前会停止正在运行的服务。继续吗？`
+    updateInstalling: '正在下载更新并应用，完成后应用会自动重启。',
+    updateInstallConfirm: (version) => `将直接更新到 ServicePilot ${version}，更新前会停止正在运行的服务。继续吗？`
   },
   'en-US': {
     appName: 'ServicePilot',
@@ -498,8 +488,8 @@ const COPY: Record<AppLanguage, Copy> = {
     mavenConfig: 'Global Maven Config',
     mavenConfigDesc: 'Reuse one Maven settings.xml and local repository across all Maven preset services.',
     logConfig: 'Log Config',
-    clearLogsOnRestart: 'Clear old logs when restarting a service',
-    clearLogsOnRestartHint: 'When enabled, Restart clears that service log before writing the new stop and launch output.',
+    clearLogsOnRestart: 'Clear old logs before starting or restarting a service',
+    clearLogsOnRestartHint: 'When enabled, Start and Restart clear that service log before writing the new launch output.',
     otherConfig: 'Other',
     otherConfigHint: 'Other system settings. More options will be supported later.',
     advancedConfigManual: 'More advanced options can be edited manually in the config file.',
@@ -519,15 +509,10 @@ const COPY: Record<AppLanguage, Copy> = {
     initFailed: 'Initialization failed.',
     actionFailed: 'Action failed.',
     logLoadFailed: 'Failed to load logs.',
-    updateConfig: 'App Updates',
-    updateConfigDesc: 'Update ServicePilot with signature-verified release packages.',
-    currentVersion: 'Current Version',
-    checkUpdate: 'Check for Updates',
-    installUpdate: 'Download and Install',
+    installUpdate: 'Update Now',
     updateAvailable: (version) => `Version ${version} is available.`,
-    updateNotAvailable: 'You are already on the latest version.',
-    updateInstalling: 'Downloading and installing the update. The app may exit during installation.',
-    updateInstallConfirm: (version) => `Download and install ServicePilot ${version}? Running services will be stopped first.`
+    updateInstalling: 'Downloading and applying the update. The app will restart when it is done.',
+    updateInstallConfirm: (version) => `Update directly to ServicePilot ${version}? Running services will be stopped first.`
   }
 };
 
@@ -1616,6 +1601,27 @@ export function App() {
     let disposed = false;
 
     window.servicePilot
+      .checkUpdate()
+      .then((nextUpdate) => {
+        if (!disposed) {
+          setUpdateInfo(nextUpdate);
+        }
+      })
+      .catch(() => {
+        if (!disposed) {
+          setUpdateInfo(null);
+        }
+      });
+
+    return () => {
+      disposed = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let disposed = false;
+
+    window.servicePilot
       .getSnapshot()
       .then((nextSnapshot) => {
         if (!disposed) {
@@ -1989,17 +1995,6 @@ export function App() {
     });
   }
 
-  async function handleCheckUpdate() {
-    await runAction('check-update', async () => {
-      const nextUpdate = await window.servicePilot.checkUpdate();
-      setUpdateInfo(nextUpdate);
-      setFeedback({
-        message: nextUpdate ? copy.updateAvailable(nextUpdate.version) : copy.updateNotAvailable,
-        tone: 'success'
-      });
-    });
-  }
-
   async function handleInstallUpdate() {
     if (!updateInfo || !window.confirm(copy.updateInstallConfirm(updateInfo.version))) {
       return;
@@ -2203,6 +2198,7 @@ export function App() {
   async function handleBatchStart() {
     const targets = filteredServices.filter((service) => getRuntime(snapshot, service.id).status !== 'running');
     await runAction('batch-start', async () => {
+      clearServiceLogsForLaunch(targets.map((service) => service.id));
       for (const service of targets) {
         await window.servicePilot.startService(service.id);
       }
@@ -2223,13 +2219,22 @@ export function App() {
 
   function handleRestartService(serviceId: string) {
     void runAction(`restart-${serviceId}`, async () => {
-      if (snapshot.settings.clearLogsOnRestart ?? true) {
-        setLogsByService((current) => ({
-          ...current,
-          [serviceId]: []
-        }));
-      }
+      clearServiceLogsForLaunch([serviceId]);
       await window.servicePilot.restartService(serviceId);
+    });
+  }
+
+  function clearServiceLogsForLaunch(serviceIds: string[]) {
+    if (!(snapshot.settings.clearLogsOnRestart ?? true) || !serviceIds.length) {
+      return;
+    }
+
+    setLogsByService((current) => {
+      const next = { ...current };
+      for (const serviceId of serviceIds) {
+        next[serviceId] = [];
+      }
+      return next;
     });
   }
 
@@ -2273,7 +2278,21 @@ export function App() {
           </div>
           <div className="pilot-brand__copy">
             <h1>{copy.appName}</h1>
-            <span className="pilot-brand__version">v{appVersion}</span>
+            <div className="pilot-brand__version-row" data-no-window-drag>
+              <span className="pilot-brand__version">v{appVersion}</span>
+              {updateInfo && (
+                <button
+                  aria-label={copy.installUpdate}
+                  className="pilot-brand__update-button pilot-brand__update-button--available"
+                  disabled={busyKey === 'install-update'}
+                  onClick={() => void handleInstallUpdate()}
+                  title={copy.updateAvailable(updateInfo.version)}
+                  type="button"
+                >
+                  <AppIcon icon="arrowUp" size={14} />
+                </button>
+              )}
+            </div>
           </div>
         </div>
 
@@ -2459,7 +2478,15 @@ export function App() {
                                         setGroupMenuId('');
                                         void runAction(
                                           `${hasRunningService ? 'stop' : 'start'}-group-${group.id}`,
-                                          () => (hasRunningService ? window.servicePilot.stopGroup(group.id) : window.servicePilot.startGroup(group.id))
+                                          async () => {
+                                            if (hasRunningService) {
+                                              await window.servicePilot.stopGroup(group.id);
+                                              return;
+                                            }
+
+                                            clearServiceLogsForLaunch(group.serviceIds);
+                                            await window.servicePilot.startGroup(group.id);
+                                          }
                                         );
                                       }}
                                       type="button"
@@ -2573,7 +2600,10 @@ export function App() {
                                   const action =
                                     runtime.status === 'running'
                                       ? () => window.servicePilot.stopService(service.id)
-                                      : () => window.servicePilot.startService(service.id);
+                                      : async () => {
+                                          clearServiceLogsForLaunch([service.id]);
+                                          await window.servicePilot.startService(service.id);
+                                        };
                                   void runAction(`toggle-group-service-${service.id}`, action);
                                 }}
                               />
@@ -2686,46 +2716,6 @@ export function App() {
                       <small>{copy.clearLogsOnRestartHint}</small>
                     </span>
                   </label>
-                </section>
-
-                <section className="pilot-settings-group">
-                  <div className="pilot-settings-section__heading">
-                    <div>
-                      <div className="pilot-settings-section__title">{copy.updateConfig}</div>
-                      <p>{copy.updateConfigDesc}</p>
-                    </div>
-                  </div>
-
-                  <div className="settings-update-panel">
-                    <div className="settings-update-panel__version">
-                      <span>{copy.currentVersion}</span>
-                      <strong>v{appVersion}</strong>
-                    </div>
-                    {updateInfo && (
-                      <div className="settings-update-panel__available">
-                        <strong>{copy.updateAvailable(updateInfo.version)}</strong>
-                        {updateInfo.notes && <small>{updateInfo.notes}</small>}
-                      </div>
-                    )}
-                    <div className="settings-update-panel__actions">
-                      <ActionButton
-                        compact
-                        disabled={busyKey === 'check-update' || busyKey === 'install-update'}
-                        icon="refresh"
-                        kind="default"
-                        label={copy.checkUpdate}
-                        onClick={() => void handleCheckUpdate()}
-                      />
-                      <ActionButton
-                        compact
-                        disabled={!updateInfo || busyKey === 'check-update' || busyKey === 'install-update'}
-                        icon="gear"
-                        kind="primary"
-                        label={copy.installUpdate}
-                        onClick={() => void handleInstallUpdate()}
-                      />
-                    </div>
-                  </div>
                 </section>
 
                 <div className="pilot-settings-actions">
@@ -2920,7 +2910,10 @@ export function App() {
                               kind="primary"
                               label={copy.start}
                               onClick={() => {
-                                void runAction(`start-${service.id}`, () => window.servicePilot.startService(service.id));
+                                void runAction(`start-${service.id}`, async () => {
+                                  clearServiceLogsForLaunch([service.id]);
+                                  await window.servicePilot.startService(service.id);
+                                });
                               }}
                             />
                           )}

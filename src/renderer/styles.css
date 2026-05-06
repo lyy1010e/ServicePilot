@@ -170,6 +170,13 @@ textarea {
   gap: 12px;
 }
 
+.pilot-brand__version-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  -webkit-app-region: no-drag;
+}
+
 .pilot-brand__copy h1 {
   margin: 0;
   font-size: 24px;
@@ -188,6 +195,42 @@ textarea {
   font-size: 12px;
   font-weight: 600;
   box-shadow: inset 0 0 0 1px var(--border);
+}
+
+.pilot-brand__update-button {
+  display: grid;
+  place-items: center;
+  width: 25px;
+  height: 25px;
+  border-radius: 999px;
+  color: var(--text-soft);
+  background: rgba(255, 255, 255, 0.025);
+  box-shadow: inset 0 0 0 1px var(--border);
+  transition: color 140ms ease, background 140ms ease, transform 140ms ease, box-shadow 140ms ease;
+}
+
+.pilot-brand__update-button:hover:not(:disabled) {
+  color: var(--text-main);
+  background: rgba(37, 99, 235, 0.14);
+  transform: translateY(-1px);
+}
+
+.pilot-brand__update-button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.pilot-brand__update-button--available {
+  color: #dbeafe;
+  background: linear-gradient(135deg, #2563eb, #16a34a);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.18),
+    0 8px 18px rgba(37, 99, 235, 0.22);
+}
+
+.pilot-brand__update-button--available:hover:not(:disabled) {
+  color: #ffffff;
+  background: linear-gradient(135deg, #1d4ed8, #15803d);
 }
 
 .pilot-header__tools {
@@ -1106,57 +1149,6 @@ textarea {
 .settings-path-field__button:hover {
   color: var(--text-main);
   background: rgba(37, 99, 235, 0.14);
-}
-
-.settings-update-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  width: min(100%, 640px);
-  padding: 14px 16px;
-  border-radius: 8px;
-  background: rgba(2, 8, 18, 0.22);
-  box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.16);
-}
-
-.settings-update-panel__version,
-.settings-update-panel__available,
-.settings-update-panel__actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.settings-update-panel__version {
-  justify-content: space-between;
-}
-
-.settings-update-panel__version span,
-.settings-update-panel__available small {
-  color: var(--text-muted);
-  font-size: 13px;
-}
-
-.settings-update-panel__version strong,
-.settings-update-panel__available strong {
-  color: var(--text-main);
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.settings-update-panel__available {
-  align-items: flex-start;
-  flex-direction: column;
-  padding-top: 2px;
-}
-
-.settings-update-panel__available small {
-  line-height: 1.45;
-}
-
-.settings-update-panel__actions {
-  justify-content: flex-end;
-  flex-wrap: wrap;
 }
 
 .pilot-settings-section__footer {
@@ -2755,8 +2747,7 @@ textarea {
 .pilot-app[data-theme='light'] .membership-list,
 .pilot-app[data-theme='light'] .membership-selected,
 .pilot-app[data-theme='light'] .toggle-field,
-.pilot-app[data-theme='light'] .settings-path-field,
-.pilot-app[data-theme='light'] .settings-update-panel {
+.pilot-app[data-theme='light'] .settings-path-field {
   background: rgba(247, 249, 253, 0.8);
   box-shadow: inset 0 0 0 1px rgba(20, 34, 57, 0.08);
 }
