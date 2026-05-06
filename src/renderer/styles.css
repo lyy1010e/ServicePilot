@@ -1108,6 +1108,57 @@ textarea {
   background: rgba(37, 99, 235, 0.14);
 }
 
+.settings-update-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(100%, 640px);
+  padding: 14px 16px;
+  border-radius: 8px;
+  background: rgba(2, 8, 18, 0.22);
+  box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.16);
+}
+
+.settings-update-panel__version,
+.settings-update-panel__available,
+.settings-update-panel__actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.settings-update-panel__version {
+  justify-content: space-between;
+}
+
+.settings-update-panel__version span,
+.settings-update-panel__available small {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.settings-update-panel__version strong,
+.settings-update-panel__available strong {
+  color: var(--text-main);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.settings-update-panel__available {
+  align-items: flex-start;
+  flex-direction: column;
+  padding-top: 2px;
+}
+
+.settings-update-panel__available small {
+  line-height: 1.45;
+}
+
+.settings-update-panel__actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
 .pilot-settings-section__footer {
   display: flex;
   justify-content: flex-end;
@@ -2704,7 +2755,8 @@ textarea {
 .pilot-app[data-theme='light'] .membership-list,
 .pilot-app[data-theme='light'] .membership-selected,
 .pilot-app[data-theme='light'] .toggle-field,
-.pilot-app[data-theme='light'] .settings-path-field {
+.pilot-app[data-theme='light'] .settings-path-field,
+.pilot-app[data-theme='light'] .settings-update-panel {
   background: rgba(247, 249, 253, 0.8);
   box-shadow: inset 0 0 0 1px rgba(20, 34, 57, 0.08);
 }
