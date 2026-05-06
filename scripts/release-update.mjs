@@ -39,6 +39,10 @@ if (!dryRun && !skipBuild && !process.env.TAURI_SIGNING_PRIVATE_KEY) {
 
 await run('git', ['diff', '--quiet']);
 await run('git', ['diff', '--cached', '--quiet']);
+await assertCommandAvailable(
+  'gh',
+  'GitHub CLI is required to create or update releases. Install it, then run `gh auth login`.'
+);
 
 if (!skipBuild) {
   await run('npm', ['run', 'build']);
@@ -146,6 +150,14 @@ async function commandSucceeds(command, commandArgs) {
     return true;
   } catch {
     return false;
+  }
+}
+
+async function assertCommandAvailable(command, message) {
+  try {
+    await run(command, ['--version'], { quiet: true });
+  } catch {
+    throw new Error(message);
   }
 }
 
