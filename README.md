@@ -83,13 +83,37 @@ npm run build:renderer
 npm run build
 ```
 
-### 发布更新清单
+### 发布更新
+
+```bash
+npm run release:update
+```
+
+该命令会构建签名安装包、生成 updater 使用的 `latest.json`，并通过 GitHub CLI 创建或更新当前版本对应的 Release。
+
+发布前需要：
+
+- 已安装并登录 GitHub CLI：`gh auth login`
+- 当前工作区没有未提交改动
+- 已配置 Tauri updater 签名私钥环境变量，例如 `TAURI_SIGNING_PRIVATE_KEY`
+
+可以先预演命令：
+
+```bash
+npm run release:update -- --dry-run
+```
+
+如果已经构建过安装包，也可以只重新生成清单并上传：
+
+```bash
+npm run release:update -- --skip-build
+```
+
+手动生成更新清单：
 
 ```bash
 npm run release:manifest
 ```
-
-发布更新包时需要配置 Tauri updater 使用的签名私钥环境变量，例如 `TAURI_SIGNING_PRIVATE_KEY`。
 
 ## 技术栈
 

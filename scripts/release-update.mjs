@@ -1,0 +1,135 @@
+import { access, readFile } from 'node:fs/promises';
+import path from 'node:path';
+import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const repository = 'lyy1010e/ServicePilot';
+const args = new Set(process.argv.slice(2));
+const dryRun = args.has('--dry-run');
+const skipBuild = args.has('--skip-build');
+
+if (args.has('--help') || args.has('-h')) {
+  printHelp();
+  process.exit(0);
+}
+
+const tauriConfig = JSON.parse(await readFile(path.join(root, 'src-tauri', 'tauri.conf.json'), 'utf8'));
+const packageJson = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
+const cargoToml = await readFile(path.join(root, 'src-tauri', 'Cargo.toml'), 'utf8');
+const version = tauriConfig.version;
+const tag = `v${version}`;
+const artifactName = `ServicePilot_${version}_x64-setup.exe`;
+const artifactDir = path.join(root, 'src-tauri', 'target', 'release', 'bundle', 'nsis');
+const artifacts = [
+  path.join(artifactDir, artifactName),
+  path.join(artifactDir, `${artifactName}.sig`),
+  path.join(artifactDir, 'latest.json')
+];
+
+assertVersionSync(version, packageJson.version, cargoToml);
+
+if (!dryRun && !skipBuild && !process.env.TAURI_SIGNING_PRIVATE_KEY) {
+  throw new Error('TAURI_SIGNING_PRIVATE_KEY is required before building updater artifacts.');
+}
+
+await run('git', ['diff', '--quiet']);
+await run('git', ['diff', '--cached', '--quiet']);
+
+if (!skipBuild) {
+  await run('npm', ['run', 'build']);
+}
+
+await run('npm', ['run', 'release:manifest']);
+if (!dryRun) {
+  for (const artifact of artifacts) {
+    await access(artifact);
+  }
+}
+
+await run('gh', ['auth', 'status']);
+
+if (dryRun) {
+  console.log(`[dry-run] gh release view ${tag} --repo ${repository}`);
+  console.log(`[dry-run] If ${tag} exists: gh release upload ${tag} ${artifacts.join(' ')} --repo ${repository} --clobber`);
+  console.log(`[dry-run] If ${tag} does not exist: gh release create ${tag} ${artifacts.join(' ')} --repo ${repository} --title "ServicePilot ${version}" --notes "ServicePilot ${version}"`);
+} else if (await commandSucceeds('gh', ['release', 'view', tag, '--repo', repository])) {
+  await run('gh', ['release', 'upload', tag, ...artifacts, '--repo', repository, '--clobber']);
+} else {
+  await run('gh', [
+    'release',
+    'create',
+    tag,
+    ...artifacts,
+    '--repo',
+    repository,
+    '--title',
+    `ServicePilot ${version}`,
+    '--notes',
+    `ServicePilot ${version}`
+  ]);
+}
+
+console.log(`Release ${tag} is ready: https://github.com/${repository}/releases/tag/${tag}`);
+
+function assertVersionSync(tauriVersion, npmVersion, cargoText) {
+  if (npmVersion !== tauriVersion) {
+    throw new Error(`package.json version ${npmVersion} does not match tauri.conf.json version ${tauriVersion}.`);
+  }
+  if (!cargoText.includes(`version = "${tauriVersion}"`)) {
+    throw new Error(`src-tauri/Cargo.toml does not contain version = "${tauriVersion}".`);
+  }
+}
+
+async function commandSucceeds(command, commandArgs) {
+  try {
+    await run(command, commandArgs, { quiet: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function run(command, commandArgs, options = {}) {
+  const label = [command, ...commandArgs].join(' ');
+  if (dryRun) {
+    console.log(`[dry-run] ${label}`);
+    return;
+  }
+  if (!options.quiet) {
+    console.log(`> ${label}`);
+  }
+
+  await new Promise((resolve, reject) => {
+    const child = spawn(command, commandArgs, {
+      cwd: root,
+      env: process.env,
+      shell: process.platform === 'win32',
+      stdio: options.quiet ? 'ignore' : 'inherit'
+    });
+
+    child.on('error', reject);
+    child.on('exit', (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(new Error(`${label} failed with exit code ${code}.`));
+    });
+  });
+}
+
+function printHelp() {
+  console.log(`Usage: npm run release:update -- [--dry-run] [--skip-build]
+
+Builds signed updater artifacts, generates latest.json, and creates or updates
+the GitHub release for the current tauri.conf.json version.
+
+Requirements:
+  - GitHub CLI authenticated with access to ${repository}
+  - TAURI_SIGNING_PRIVATE_KEY set when building artifacts
+
+Options:
+  --dry-run     Print commands without running them
+  --skip-build  Reuse existing bundle artifacts and only regenerate/upload`);
+}

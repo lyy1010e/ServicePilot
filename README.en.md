@@ -83,13 +83,37 @@ npm run build:renderer
 npm run build
 ```
 
-### Updater Manifest
+### Publish Updates
+
+```bash
+npm run release:update
+```
+
+This command builds signed installer artifacts, generates the updater `latest.json`, and creates or updates the GitHub Release for the current app version through GitHub CLI.
+
+Before publishing:
+
+- Install and authenticate GitHub CLI: `gh auth login`
+- Keep the working tree clean
+- Set the Tauri updater signing private key environment variable, such as `TAURI_SIGNING_PRIVATE_KEY`
+
+Preview the commands first:
+
+```bash
+npm run release:update -- --dry-run
+```
+
+If artifacts are already built, regenerate the manifest and upload only:
+
+```bash
+npm run release:update -- --skip-build
+```
+
+Generate the updater manifest manually:
 
 ```bash
 npm run release:manifest
 ```
-
-Publishing updater artifacts requires the Tauri updater signing private key environment variable, such as `TAURI_SIGNING_PRIVATE_KEY`.
 
 ## Tech Stack
 
