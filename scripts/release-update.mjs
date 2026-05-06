@@ -28,6 +28,7 @@ const artifacts = [
   path.join(artifactDir, `${artifactName}.sig`),
   path.join(artifactDir, 'latest.json')
 ];
+const releaseTarget = await output('git', ['rev-parse', 'HEAD']);
 
 assertVersionSync(version, packageJson.version, cargoToml);
 
@@ -60,7 +61,7 @@ await run('gh', ['auth', 'status']);
 if (dryRun) {
   console.log(`[dry-run] gh release view ${tag} --repo ${repository}`);
   console.log(`[dry-run] If ${tag} exists: gh release upload ${tag} ${artifacts.join(' ')} --repo ${repository} --clobber`);
-  console.log(`[dry-run] If ${tag} does not exist: gh release create ${tag} ${artifacts.join(' ')} --repo ${repository} --title "ServicePilot ${version}" --notes "ServicePilot ${version}"`);
+  console.log(`[dry-run] If ${tag} does not exist: gh release create ${tag} ${artifacts.join(' ')} --repo ${repository} --target ${releaseTarget} --title "ServicePilot ${version}" --notes "ServicePilot ${version}"`);
 } else if (await commandSucceeds('gh', ['release', 'view', tag, '--repo', repository])) {
   await run('gh', ['release', 'upload', tag, ...artifacts, '--repo', repository, '--clobber']);
 } else {
@@ -71,6 +72,8 @@ if (dryRun) {
     ...artifacts,
     '--repo',
     repository,
+    '--target',
+    releaseTarget,
     '--title',
     `ServicePilot ${version}`,
     '--notes',
@@ -183,6 +186,36 @@ async function run(command, commandArgs, options = {}) {
     child.on('exit', (code) => {
       if (code === 0) {
         resolve();
+        return;
+      }
+      reject(new Error(`${label} failed with exit code ${code}.`));
+    });
+  });
+}
+
+async function output(command, commandArgs) {
+  const label = [command, ...commandArgs].join(' ');
+  if (dryRun) {
+    console.log(`[dry-run] ${label}`);
+    return 'HEAD';
+  }
+
+  return await new Promise((resolve, reject) => {
+    const child = spawn(command, commandArgs, {
+      cwd: root,
+      env: process.env,
+      shell: process.platform === 'win32',
+      stdio: ['ignore', 'pipe', 'inherit']
+    });
+
+    let stdout = '';
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk;
+    });
+    child.on('error', reject);
+    child.on('exit', (code) => {
+      if (code === 0) {
+        resolve(stdout.trim());
         return;
       }
       reject(new Error(`${label} failed with exit code ${code}.`));
