@@ -178,6 +178,7 @@ async function run(command, commandArgs, options = {}) {
     const child = spawn(resolveCommand(command), commandArgs, {
       cwd: root,
       env: process.env,
+      shell: shouldUseShell(command),
       stdio: options.quiet ? 'ignore' : 'inherit'
     });
 
@@ -203,6 +204,7 @@ async function output(command, commandArgs) {
     const child = spawn(resolveCommand(command), commandArgs, {
       cwd: root,
       env: process.env,
+      shell: shouldUseShell(command),
       stdio: ['ignore', 'pipe', 'inherit']
     });
 
@@ -222,15 +224,11 @@ async function output(command, commandArgs) {
 }
 
 function resolveCommand(command) {
-  if (process.platform !== 'win32') {
-    return command;
-  }
-
-  if (command === 'npm' || command === 'npx') {
-    return `${command}.cmd`;
-  }
-
   return command;
+}
+
+function shouldUseShell(command) {
+  return process.platform === 'win32' && (command === 'npm' || command === 'npx');
 }
 
 function printHelp() {
