@@ -175,10 +175,9 @@ async function run(command, commandArgs, options = {}) {
   }
 
   await new Promise((resolve, reject) => {
-    const child = spawn(command, commandArgs, {
+    const child = spawn(resolveCommand(command), commandArgs, {
       cwd: root,
       env: process.env,
-      shell: process.platform === 'win32',
       stdio: options.quiet ? 'ignore' : 'inherit'
     });
 
@@ -201,10 +200,9 @@ async function output(command, commandArgs) {
   }
 
   return await new Promise((resolve, reject) => {
-    const child = spawn(command, commandArgs, {
+    const child = spawn(resolveCommand(command), commandArgs, {
       cwd: root,
       env: process.env,
-      shell: process.platform === 'win32',
       stdio: ['ignore', 'pipe', 'inherit']
     });
 
@@ -221,6 +219,18 @@ async function output(command, commandArgs) {
       reject(new Error(`${label} failed with exit code ${code}.`));
     });
   });
+}
+
+function resolveCommand(command) {
+  if (process.platform !== 'win32') {
+    return command;
+  }
+
+  if (command === 'npm' || command === 'npx') {
+    return `${command}.cmd`;
+  }
+
+  return command;
 }
 
 function printHelp() {
