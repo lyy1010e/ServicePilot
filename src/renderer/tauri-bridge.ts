@@ -118,7 +118,10 @@ export function createServicePilotApi(): ServicePilotApi {
     toggleMaximizeWindow: () => invoke<void>('toggle_maximize_window'),
     startWindowDrag: () => invoke<void>('start_window_drag'),
     closeWindow: () => invoke<void>('close_window'),
+    showWindow: () => invoke<void>('show_window'),
+    exitApp: () => invoke<void>('exit_app'),
     onSnapshot: (listener) => wrapListener<AppSnapshot>('snapshot:update', listener),
-    onLogEntry: (listener) => wrapListener<LogEntry>('log:entry', listener)
+    onLogEntry: (listener) => wrapListener<LogEntry>('log:entry', listener),
+    onCloseRequested: (listener) => wrapListener<void>('close-requested', () => listener())
   };
 }

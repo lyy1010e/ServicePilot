@@ -149,6 +149,9 @@ export interface ServicePilotApi {
   toggleMaximizeWindow: () => Promise<void>;
   startWindowDrag: () => Promise<void>;
   closeWindow: () => Promise<void>;
+  showWindow: () => Promise<void>;
+  exitApp: () => Promise<void>;
   onSnapshot: (listener: (snapshot: AppSnapshot) => void) => () => void;
   onLogEntry: (listener: (entry: LogEntry) => void) => () => void;
+  onCloseRequested: (listener: () => void) => () => void;
 }

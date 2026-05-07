@@ -1499,6 +1499,9 @@ const LogTerminalRow = memo(function LogTerminalRow({
 
 export function App() {
   const [snapshot, setSnapshot] = useState<AppSnapshot>(EMPTY_SNAPSHOT);
+  const [isReady, setIsReady] = useState(false);
+  const snapshotRef = useRef(snapshot);
+  snapshotRef.current = snapshot;
   const [logsByService, setLogsByService] = useState<Record<string, LogEntry[]>>({});
   const [selectedGroup, setSelectedGroup] = useState<GroupSelection>('all');
   const [serviceSearch, setServiceSearch] = useState('');
@@ -1517,6 +1520,7 @@ export function App() {
   const [groupForm, setGroupForm] = useState<GroupFormState | null>(null);
   const [serviceGroupForm, setServiceGroupForm] = useState<ServiceGroupFormState | null>(null);
   const [deleteServiceTarget, setDeleteServiceTarget] = useState<ServiceConfig | null>(null);
+  const [exitConfirmOpen, setExitConfirmOpen] = useState(false);
   const [settingsForm, setSettingsForm] = useState<SettingsFormState>(() =>
     buildSettingsForm({ language: 'zh-CN', mavenSettingsFile: '', mavenLocalRepository: '', clearLogsOnRestart: true })
   );
@@ -1567,6 +1571,19 @@ export function App() {
     delete logRowRefs.current[id];
   }, []);
 
+  const handleCloseAttempt = useCallback(() => {
+    const current = snapshotRef.current;
+    const hasRunning = current.services.some((service) => {
+      const status = (current.runtime[service.id]?.status ?? 'stopped') as string;
+      return status === 'running' || status === 'starting' || status === 'stopping';
+    });
+    if (hasRunning) {
+      setExitConfirmOpen(true);
+    } else {
+      void window.servicePilot.exitApp();
+    }
+  }, []);
+
   useEffect(() => {
     const timer = window.setInterval(() => {
       setNow(Date.now());
@@ -1598,42 +1615,51 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    if (!isReady) { return; }
     let disposed = false;
-
-    window.servicePilot
-      .checkUpdate()
-      .then((nextUpdate) => {
-        if (!disposed) {
-          setUpdateInfo(nextUpdate);
-        }
-      })
-      .catch(() => {
-        if (!disposed) {
-          setUpdateInfo(null);
-        }
-      });
-
+    const timer = window.setTimeout(() => {
+      window.servicePilot
+        .checkUpdate()
+        .then((nextUpdate) => {
+          if (!disposed) {
+            setUpdateInfo(nextUpdate);
+          }
+        })
+        .catch(() => {
+          if (!disposed) {
+            setUpdateInfo(null);
+          }
+        });
+    }, 3000);
     return () => {
       disposed = true;
+      window.clearTimeout(timer);
     };
-  }, []);
+  }, [isReady]);
 
   useEffect(() => {
     let disposed = false;
 
+    performance.mark('sp-snapshot-start');
     window.servicePilot
       .getSnapshot()
       .then((nextSnapshot) => {
         if (!disposed) {
+          performance.mark('sp-snapshot-end');
+          performance.measure('sp: getSnapshot IPC', 'sp-snapshot-start', 'sp-snapshot-end');
           setSnapshot(nextSnapshot);
+          setIsReady(true);
         }
       })
       .catch((error) => {
         if (!disposed) {
+          performance.mark('sp-snapshot-end');
+          performance.measure('sp: getSnapshot IPC (failed)', 'sp-snapshot-start', 'sp-snapshot-end');
           setFeedback({
             message: error instanceof Error ? error.message : copy.initFailed,
             tone: 'error'
           });
+          setIsReady(true);
         }
       });
 
@@ -1653,10 +1679,15 @@ export function App() {
       });
     });
 
+    const offCloseRequested = window.servicePilot.onCloseRequested(() => {
+      handleCloseAttempt();
+    });
+
     return () => {
       disposed = true;
       offSnapshot();
       offLog();
+      offCloseRequested();
     };
   }, [copy.initFailed]);
 
@@ -1671,6 +1702,22 @@ export function App() {
       window.removeEventListener('click', closeMenus);
     };
   }, []);
+
+  useEffect(() => {
+    if (!isReady) { return; }
+    const splash = document.getElementById('splash');
+    if (splash) {
+      splash.classList.add('fade-out');
+      window.setTimeout(() => { splash.remove(); }, 350);
+    }
+    window.servicePilot.showWindow().catch(() => {});
+    performance.mark('sp-ready-end');
+    performance.measure('sp: total to interactive', 'sp-bridge-start', 'sp-ready-end');
+    const measures = performance.getEntriesByType('measure');
+    for (const m of measures) {
+      console.log(`[ServicePilot] ${m.name}: ${m.duration.toFixed(1)}ms`);
+    }
+  }, [isReady]);
 
   useEffect(() => {
     if (!snapshot.services.length) {
@@ -2329,7 +2376,7 @@ export function App() {
               aria-label="Close window"
               className="pilot-window-control pilot-window-control--close"
               data-no-window-drag
-              onClick={() => void window.servicePilot.closeWindow()}
+              onClick={handleCloseAttempt}
               title={language === 'zh-CN' ? '关闭' : 'Close'}
               type="button"
             >
@@ -2400,7 +2447,11 @@ export function App() {
         </aside>
 
         <main className="pilot-main">
-          {activeNav === 'groups' ? (
+          {!isReady ? (
+            <div className="pilot-loading">
+              <div className="pilot-loading__spinner" />
+            </div>
+          ) : activeNav === 'groups' ? (
             <section className="pilot-surface pilot-surface--groups">
               <section className="pilot-group-hero">
                 <div>
@@ -3283,6 +3334,26 @@ export function App() {
                     }
                   });
                 }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {exitConfirmOpen && (
+        <div className="modal-backdrop">
+          <div className="modal modal--exit">
+            <div className="modal__header">
+              <p>{copy.quitConfirm}</p>
+            </div>
+            <div className="modal__footer">
+              <ActionButton compact icon="close" kind="default" label={copy.cancel} onClick={() => setExitConfirmOpen(false)} />
+              <ActionButton
+                compact
+                icon="stop"
+                kind="danger"
+                label={language === 'zh-CN' ? '退出' : 'Exit'}
+                onClick={() => void window.servicePilot.exitApp()}
               />
             </div>
           </div>

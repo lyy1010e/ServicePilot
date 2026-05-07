@@ -1389,7 +1389,7 @@ impl ServicePilotBackend {
             let line_lower = line.to_lowercase();
             if (line_lower.contains("started") && line_lower.contains("application"))
               || (line_lower.contains("started") && line_lower.contains("umsp"))
-              || (line_lower.contains("started") && line_lower.contains("in"))
+              || (line_lower.contains("started") && line_lower.contains("seconds"))
             {
               backend.mark_service_running(&service_id).await;
             }
@@ -2510,6 +2510,9 @@ async fn check_update(
   app: AppHandle<Wry>,
   update_state: State<'_, UpdateState>,
 ) -> BackendResult<Option<AppUpdateInfo>> {
+  if cfg!(debug_assertions) {
+    return Ok(None);
+  }
   let update = app
     .updater()
     .map_err(|error| error.to_string())?
@@ -2571,6 +2574,18 @@ fn start_window_drag(window: Window) -> BackendResult<()> {
 #[tauri::command]
 fn close_window(window: Window) -> BackendResult<()> {
   window.hide().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn show_window(app_handle: AppHandle<Wry>) -> BackendResult<()> {
+  show_main_window(&app_handle);
+  Ok(())
+}
+
+#[tauri::command]
+fn exit_app(app_handle: AppHandle<Wry>) -> BackendResult<()> {
+  app_handle.exit(0);
+  Ok(())
 }
 
 fn show_main_window(app_handle: &AppHandle<Wry>) {
@@ -2637,16 +2652,25 @@ pub fn run() {
   let exit_guard = Arc::new(AtomicBool::new(false));
   let setup_exit_guard = exit_guard.clone();
 
-  let builder = tauri::Builder::default()
+  let mut builder = tauri::Builder::default()
     .plugin(tauri_plugin_dialog::init())
-    .plugin(tauri_plugin_opener::init())
-    .plugin(tauri_plugin_updater::Builder::new().build())
+    .plugin(tauri_plugin_opener::init());
+
+  if !cfg!(debug_assertions) {
+    builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+  }
+
+  let builder = builder
     .setup(move |app| {
       let app_handle = app.handle().clone();
+      let t0 = std::time::Instant::now();
       let backend = tauri::async_runtime::block_on(ServicePilotBackend::new(app_handle))
         .unwrap_or_else(|error| panic!("failed to initialize backend: {error}"));
+      eprintln!("[ServicePilot] backend::new  {}ms", t0.elapsed().as_millis());
+      let t1 = std::time::Instant::now();
       tauri::async_runtime::block_on(backend.init())
         .unwrap_or_else(|error| panic!("failed to load backend state: {error}"));
+      eprintln!("[ServicePilot] backend::init {}ms", t1.elapsed().as_millis());
       app.manage(AppState {
         backend: Arc::new(backend),
       });
@@ -2654,6 +2678,7 @@ pub fn run() {
         pending: StdMutex::new(None),
       });
       setup_tray(app, setup_exit_guard.clone())?;
+      eprintln!("[ServicePilot] setup total  {}ms", t0.elapsed().as_millis());
       Ok(())
     })
     .invoke_handler(tauri::generate_handler![
@@ -2690,6 +2715,8 @@ pub fn run() {
       toggle_maximize_window,
       start_window_drag,
       close_window,
+      show_window,
+      exit_app,
       shutdown
     ]);
 
@@ -2708,7 +2735,8 @@ pub fn run() {
         } if label == "main" => {
           api.prevent_close();
           if let Some(window) = app_handle.get_webview_window("main") {
-            let _ = window.hide();
+            let _ = window.show();
+            let _ = window.emit("close-requested", ());
           }
         }
         RunEvent::ExitRequested {
