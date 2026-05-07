@@ -1711,11 +1711,15 @@ export function App() {
       window.setTimeout(() => { splash.remove(); }, 350);
     }
     window.servicePilot.showWindow().catch(() => {});
-    performance.mark('sp-ready-end');
-    performance.measure('sp: total to interactive', 'sp-bridge-start', 'sp-ready-end');
-    const measures = performance.getEntriesByType('measure');
-    for (const m of measures) {
-      console.log(`[ServicePilot] ${m.name}: ${m.duration.toFixed(1)}ms`);
+    try {
+      performance.mark('sp-ready-end');
+      performance.measure('sp: total to interactive', 'sp-bridge-start', 'sp-ready-end');
+      const measures = performance.getEntriesByType('measure');
+      for (const m of measures) {
+        console.log(`[ServicePilot] ${m.name}: ${m.duration.toFixed(1)}ms`);
+      }
+    } catch {
+      // performance marks may not exist in test environment
     }
   }, [isReady]);
 
