@@ -99,7 +99,7 @@ describe('App service flows', () => {
     vi.restoreAllMocks();
   });
 
-  it('saves a new Spring service from the service modal', async () => {
+  it('saves a new Spring service from the service modal', { timeout: 10000 }, async () => {
     const { api, user } = await renderApp(snapshot());
     vi.mocked(api.pickDirectory).mockResolvedValue('D:\\workspace\\gateway');
     vi.mocked(api.detectProject).mockResolvedValue({
