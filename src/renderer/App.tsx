@@ -4,10 +4,12 @@ import type {
   AppLanguage,
   AppSnapshot,
   AppUpdateInfo,
+  BatchImportItem,
   LogEntry,
   RuntimeState,
   SaveGroupInput,
   SaveServiceInput,
+  ScannedService,
   ServiceConfig,
   ServiceGroup,
   ServiceKind
@@ -216,6 +218,14 @@ type Copy = {
   updateAvailable: (version: string) => string;
   updateInstalling: string;
   updateInstallConfirm: (version: string) => string;
+  scanImport: string;
+  scanningServices: string;
+  detectedServices: (count: number) => string;
+  selectAll: string;
+  importSelected: string;
+  noServicesDetected: string;
+  scanFailed: string;
+  servicesImported: (count: number) => string;
 };
 
 const COPY: Record<AppLanguage, Copy> = {
@@ -364,7 +374,15 @@ const COPY: Record<AppLanguage, Copy> = {
     installUpdate: '立即更新',
     updateAvailable: (version) => `发现新版本 ${version}。`,
     updateInstalling: '正在下载更新并应用，完成后应用会自动重启。',
-    updateInstallConfirm: (version) => `将直接更新到 ServicePilot ${version}，更新前会停止正在运行的服务。继续吗？`
+    updateInstallConfirm: (version) => `将直接更新到 ServicePilot ${version}，更新前会停止正在运行的服务。继续吗？`,
+    scanImport: '扫描导入',
+    scanningServices: '扫描中...',
+    detectedServices: (count) => `检测到 ${count} 个 Spring Boot 服务`,
+    selectAll: '全选',
+    importSelected: '导入选中服务',
+    noServicesDetected: '未检测到 Spring Boot 服务',
+    scanFailed: '扫描失败',
+    servicesImported: (count) => `已导入 ${count} 个服务`
   },
   'en-US': {
     appName: 'ServicePilot',
@@ -512,7 +530,15 @@ const COPY: Record<AppLanguage, Copy> = {
     installUpdate: 'Update Now',
     updateAvailable: (version) => `Version ${version} is available.`,
     updateInstalling: 'Downloading and applying the update. The app will restart when it is done.',
-    updateInstallConfirm: (version) => `Update directly to ServicePilot ${version}? Running services will be stopped first.`
+    updateInstallConfirm: (version) => `Update directly to ServicePilot ${version}? Running services will be stopped first.`,
+    scanImport: 'Scan & Import',
+    scanningServices: 'Scanning...',
+    detectedServices: (count) => `Detected ${count} Spring Boot services`,
+    selectAll: 'Select All',
+    importSelected: 'Import Selected',
+    noServicesDetected: 'No Spring Boot services detected',
+    scanFailed: 'Scan failed',
+    servicesImported: (count) => `Imported ${count} services`
   }
 };
 
@@ -541,6 +567,7 @@ type ServiceFormState = {
   mavenForceUpdate: boolean;
   mavenDebugMode: boolean;
   mavenDisableFork: boolean;
+  groupIds: string[];
 };
 
 type GroupFormState = {
@@ -838,7 +865,7 @@ function AppIcon({ icon, size = 18, className = '' }: { icon: IconName; size?: n
   }
 }
 
-function buildServiceForm(service?: ServiceConfig): ServiceFormState {
+function buildServiceForm(service?: ServiceConfig, groups?: ServiceGroup[]): ServiceFormState {
   return {
     id: service?.id,
     name: service?.name ?? '',
@@ -859,7 +886,10 @@ function buildServiceForm(service?: ServiceConfig): ServiceFormState {
     frontendScript: service?.frontendScript ?? 'dev',
     mavenForceUpdate: service?.mavenForceUpdate ?? false,
     mavenDebugMode: service?.mavenDebugMode ?? false,
-    mavenDisableFork: service?.mavenDisableFork ?? false
+    mavenDisableFork: service?.mavenDisableFork ?? false,
+    groupIds: service && groups
+      ? groups.filter((group) => group.serviceIds.includes(service.id)).map((group) => group.id)
+      : []
   };
 }
 
@@ -1132,6 +1162,8 @@ function shouldAppendToPreviousLog(previous: LogEntry | undefined, entry: LogEnt
   );
 }
 
+const MAX_MERGE_TEXT_LENGTH = 100 * 1024; // 100 KB — 防止单条合并日志无限增长
+
 function mergeLogEntries(entries: LogEntry[], entry: LogEntry): LogEntry[] {
   const previous = entries[entries.length - 1];
   if (previous?.id === entry.id) {
@@ -1140,9 +1172,12 @@ function mergeLogEntries(entries: LogEntry[], entry: LogEntry): LogEntry[] {
   if (!shouldAppendToPreviousLog(previous, entry)) {
     return [...entries, entry].slice(-2000);
   }
+  const combined = `${previous.text}\n${entry.text}`;
   const merged = {
     ...previous,
-    text: `${previous.text}\n${entry.text}`
+    text: combined.length > MAX_MERGE_TEXT_LENGTH
+      ? combined.slice(-MAX_MERGE_TEXT_LENGTH)
+      : combined
   };
   return [...entries.slice(0, -1), merged].slice(-2000);
 }
@@ -1514,7 +1549,6 @@ export function App() {
   const [rowMenuServiceId, setRowMenuServiceId] = useState('');
   const [selectedWorkspaceGroupId, setSelectedWorkspaceGroupId] = useState('');
   const [groupMenuId, setGroupMenuId] = useState('');
-  const [batchMenuOpen, setBatchMenuOpen] = useState(false);
   const [serviceGroupSearch, setServiceGroupSearch] = useState('');
   const [serviceForm, setServiceForm] = useState<ServiceFormState | null>(null);
   const [groupForm, setGroupForm] = useState<GroupFormState | null>(null);
@@ -1529,6 +1563,11 @@ export function App() {
   const [now, setNow] = useState(Date.now());
   const [appVersion, setAppVersion] = useState('1.0.0');
   const [updateInfo, setUpdateInfo] = useState<AppUpdateInfo | null>(null);
+  const [scanModalOpen, setScanModalOpen] = useState(false);
+  const [scanResults, setScanResults] = useState<ScannedService[]>([]);
+  const [scanSelected, setScanSelected] = useState<Set<string>>(new Set());
+  const [scanLoading, setScanLoading] = useState(false);
+  const [scanGroupIds, setScanGroupIds] = useState<string[]>([]);
 
   const language = snapshot.settings.language;
   const copy = COPY[language];
@@ -1562,6 +1601,8 @@ export function App() {
   const deferredLogQuery = useDeferredValue(logQuery.trim().toLowerCase());
   const logStreamRef = useRef<HTMLDivElement | null>(null);
   const autoScrollPausedBySearchRef = useRef(false);
+  const selectedLogServiceIdRef = useRef(selectedLogServiceId);
+  selectedLogServiceIdRef.current = selectedLogServiceId;
   const logRowRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const registerLogRow = useCallback((id: string, node: HTMLDivElement | null) => {
     if (node) {
@@ -1584,7 +1625,22 @@ export function App() {
     }
   }, []);
 
+  // 只有存在运行中/启动中/停止中的服务时才轮询时钟，避免空闲期每秒强制重渲染
+  const hasActiveServices = useMemo(
+    () => snapshot.services.some((s) => {
+      const status = snapshot.runtime[s.id]?.status ?? 'stopped';
+      return status === 'running' || status === 'starting' || status === 'stopping';
+    }),
+    [snapshot]
+  );
+
   useEffect(() => {
+    if (!hasActiveServices) {
+      // 无活跃服务时，手动刷新一次时间后停止
+      setNow(Date.now());
+      return;
+    }
+
     const timer = window.setInterval(() => {
       setNow(Date.now());
     }, 1000);
@@ -1592,7 +1648,7 @@ export function App() {
     return () => {
       window.clearInterval(timer);
     };
-  }, []);
+  }, [hasActiveServices]);
 
   useEffect(() => {
     let disposed = false;
@@ -1670,6 +1726,11 @@ export function App() {
     const offLog = window.servicePilot.onLogEntry((entry) => {
       startTransition(() => {
         setLogsByService((current) => {
+          // 只为当前选中的服务累积实时日志，其他服务切换时从 getLogHistory 加载
+          const selectedId = snapshotRef.current.services.length > 0 ? selectedLogServiceIdRef.current : '';
+          if (selectedId && entry.serviceId !== selectedId) {
+            return current;
+          }
           const entries = current[entry.serviceId] ?? [];
           return {
             ...current,
@@ -2011,20 +2072,127 @@ export function App() {
     });
   }
 
-  async function handleQuickImportProject() {
+  async function handleScanImport() {
     const defaultPath = snapshot.services[0]?.workingDir || undefined;
     const projectDir = await window.servicePilot.pickDirectory(defaultPath);
     if (!projectDir) {
       return;
     }
 
-    await runAction('import-project', async () => {
-      const service = await window.servicePilot.quickStartProject(projectDir);
-      setSelectedLogServiceId(service.id);
+    setScanLoading(true);
+    setScanResults([]);
+    setScanSelected(new Set());
+
+    try {
+      // 先尝试扫描 Spring Boot 服务
+      const result = await window.servicePilot.scanSpringServices(projectDir);
+
+      if (result.services.length > 0) {
+        // 扫描到 Spring Boot 服务，显示列表让用户选择
+        setScanResults(result.services);
+        setScanSelected(new Set(result.services.map((s) => s.workingDir)));
+        setScanModalOpen(true);
+      } else {
+        // 没扫描到 Spring Boot 服务，尝试检测前端项目
+        const detected = await window.servicePilot.detectProject(projectDir);
+
+        if (detected.serviceKind === 'vue') {
+          // 是前端项目，直接导入
+          await runAction('import-project', async () => {
+            const service = await window.servicePilot.importProject(projectDir);
+            setSelectedLogServiceId(service.id);
+            setFeedback({
+              message: copy.servicesImported(1),
+              tone: 'success'
+            });
+          });
+        } else {
+          // 都不是，打开表单让用户手动填写
+          setServiceForm({
+            ...buildServiceForm(),
+            workingDir: projectDir
+          });
+        }
+      }
+    } catch (error) {
       setFeedback({
-        message: copy.ideaProjectStarted,
-        tone: 'success'
+        message: error instanceof Error ? error.message : copy.scanFailed,
+        tone: 'error'
       });
+    } finally {
+      setScanLoading(false);
+    }
+  }
+
+  function handleToggleScanSelect(workingDir: string) {
+    setScanSelected((current) => {
+      const next = new Set(current);
+      if (next.has(workingDir)) {
+        next.delete(workingDir);
+      } else {
+        next.add(workingDir);
+      }
+      return next;
+    });
+  }
+
+  function handleToggleSelectAll() {
+    if (scanSelected.size === scanResults.length) {
+      setScanSelected(new Set());
+    } else {
+      setScanSelected(new Set(scanResults.map((s) => s.workingDir)));
+    }
+  }
+
+  async function handleBatchImportSelected() {
+    const items: BatchImportItem[] = scanResults
+      .filter((s) => scanSelected.has(s.workingDir))
+      .map((s) => ({ name: s.name, workingDir: s.workingDir }));
+
+    if (!items.length) {
+      return;
+    }
+
+    const assignGroupIds = [...scanGroupIds];
+
+    await runAction('batch-import', async () => {
+      const imported = await window.servicePilot.batchImportServices(items);
+
+      if (imported.length && assignGroupIds.length) {
+        const importedIds = new Set(imported.map((s) => s.id));
+        for (const groupId of assignGroupIds) {
+          const group = snapshot.groups.find((g) => g.id === groupId);
+          if (!group) {
+            continue;
+          }
+          const existingIds = group.serviceIds.filter((id) => !importedIds.has(id));
+          await window.servicePilot.saveGroup({
+            id: group.id,
+            name: group.name,
+            serviceIds: [...existingIds, ...imported.map((s) => s.id)]
+          });
+        }
+      }
+
+      setScanModalOpen(false);
+      setScanResults([]);
+      setScanSelected(new Set());
+      setScanGroupIds([]);
+      if (imported.length) {
+        setSelectedLogServiceId(imported[0].id);
+      }
+      const failed = items.length - imported.length;
+      if (failed > 0) {
+        setFeedback({
+          message: copy.servicesImported(imported.length) + `，${failed} 个导入失败`,
+          tone: imported.length > 0 ? 'success' : 'error'
+        });
+      } else {
+        setFeedback({
+          message: copy.servicesImported(imported.length),
+          tone: 'success'
+        });
+      }
     });
   }
 
@@ -2145,6 +2313,24 @@ export function App() {
     if (isSimpleDirectoryImportForm(serviceForm)) {
       await runAction('import-project-service', async () => {
         const service = await window.servicePilot.importProject(serviceForm.workingDir.trim());
+
+        // 保存分组关系
+        if (serviceForm.groupIds.length > 0) {
+          const targetGroupIds = new Set(serviceForm.groupIds);
+          for (const group of snapshot.groups) {
+            const shouldInclude = targetGroupIds.has(group.id);
+            if (!shouldInclude) {
+              continue;
+            }
+
+            await window.servicePilot.saveGroup({
+              id: group.id,
+              name: group.name,
+              serviceIds: [...group.serviceIds, service.id]
+            });
+          }
+        }
+
         setSelectedLogServiceId(service.id);
         setServiceForm(null);
       });
@@ -2187,7 +2373,28 @@ export function App() {
     };
 
     await runAction(`save-service-${payload.id ?? 'new'}`, async () => {
-      await window.servicePilot.saveService(payload);
+      const saved = await window.servicePilot.saveService(payload);
+
+      // 保存分组关系
+      if (serviceForm.groupIds.length > 0) {
+        const targetGroupIds = new Set(serviceForm.groupIds);
+        for (const group of snapshot.groups) {
+          const currentlyIncluded = group.serviceIds.includes(saved.id);
+          const shouldInclude = targetGroupIds.has(group.id);
+          if (currentlyIncluded === shouldInclude) {
+            continue;
+          }
+
+          await window.servicePilot.saveGroup({
+            id: group.id,
+            name: group.name,
+            serviceIds: shouldInclude
+              ? [...group.serviceIds, saved.id]
+              : group.serviceIds.filter((id) => id !== saved.id)
+          });
+        }
+      }
+
       setServiceForm(null);
     });
   }
@@ -2817,54 +3024,25 @@ export function App() {
                   />
                   <div className="batch-menu-wrap">
                     <button
-                      className="action-button action-button--default action-button--compact"
+                      className="action-button action-button--success action-button--compact"
                       disabled={busyKey !== ''}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        setBatchMenuOpen((current) => !current);
-                      }}
+                      onClick={() => void handleBatchStart()}
                       type="button"
                     >
                       <AppIcon icon="batchStart" size={16} />
-                      <span>{language === 'zh-CN' ? '批量操作' : 'Batch Actions'}</span>
-                      <AppIcon icon="chevronDown" size={14} />
+                      <span>{copy.batchStart}</span>
                     </button>
-                    {batchMenuOpen && (
-                      <div className="floating-menu floating-menu--batch" onClick={(event) => event.stopPropagation()}>
-                        <button
-                          className="floating-menu__item floating-menu__item--success"
-                          onClick={() => {
-                            setBatchMenuOpen(false);
-                            void handleBatchStart();
-                          }}
-                          type="button"
-                        >
-                          {copy.batchStart}
-                        </button>
-                        <button
-                          className="floating-menu__item floating-menu__item--danger"
-                          onClick={() => {
-                            setBatchMenuOpen(false);
-                            void handleBatchStop();
-                          }}
-                          type="button"
-                        >
-                          {copy.batchStop}
-                        </button>
-                      </div>
-                    )}
+                    <button
+                      className="action-button action-button--danger action-button--compact"
+                      disabled={busyKey !== ''}
+                      onClick={() => void handleBatchStop()}
+                      type="button"
+                    >
+                      <AppIcon icon="stop" size={16} />
+                      <span>{copy.batchStop}</span>
+                    </button>
                   </div>
-                  <ActionButton
-                    compact
-                    disabled={busyKey !== ''}
-                    icon="start"
-                    kind="default"
-                    label={copy.quickStartIdeaProject}
-                    onClick={() => {
-                      void handleQuickImportProject();
-                    }}
-                  />
-                  <ActionButton compact icon="addService" kind="primary" label={copy.addService} onClick={() => setServiceForm(buildServiceForm())} />
+                  <ActionButton compact icon="addService" kind="primary" label={copy.addService} onClick={() => void handleScanImport()} />
                 </div>
               </div>
 
@@ -2990,7 +3168,7 @@ export function App() {
                                       className="floating-menu__item"
                                       onClick={() => {
                                         setRowMenuServiceId('');
-                                        setServiceForm(buildServiceForm(service));
+                                        setServiceForm(buildServiceForm(service, snapshot.groups));
                                       }}
                                       type="button"
                                     >
@@ -3030,12 +3208,10 @@ export function App() {
                       <ActionButton
                         compact
                         disabled={busyKey !== ''}
-                        icon="start"
+                        icon="addService"
                         kind="primary"
-                        label={copy.quickStartIdeaProject}
-                        onClick={() => {
-                          void handleQuickImportProject();
-                        }}
+                        label={copy.addService}
+                        onClick={() => void handleScanImport()}
                       />
                     </div>
                   )}
@@ -3206,6 +3382,41 @@ export function App() {
                 </div>
               </div>
 
+              <div className="field field--full">
+                <span>{copy.group}</span>
+                <div className="service-groups-select">
+                  {snapshot.groups.length === 0 ? (
+                    <span className="service-groups-select__empty">
+                      {language === 'zh-CN' ? '暂无分组' : 'No groups available'}
+                    </span>
+                  ) : (
+                    snapshot.groups.map((group) => {
+                      const checked = serviceForm.groupIds.includes(group.id);
+                      return (
+                        <label className={`service-groups-select__item ${checked ? 'service-groups-select__item--checked' : ''}`} key={group.id}>
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(event) => {
+                              setServiceForm({
+                                ...serviceForm,
+                                groupIds: event.target.checked
+                                  ? [...serviceForm.groupIds, group.id]
+                                  : serviceForm.groupIds.filter((id) => id !== group.id)
+                              });
+                            }}
+                          />
+                          <span>{group.name}</span>
+                          <span className="service-groups-select__count">
+                            {group.serviceIds.length}
+                          </span>
+                        </label>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+
               <details className="service-advanced field--full">
                 <summary>{language === 'zh-CN' ? '高级配置' : 'Advanced'}</summary>
                 <div className="service-advanced__grid">
@@ -3332,6 +3543,22 @@ export function App() {
                   const target = deleteServiceTarget;
                   void runAction(`delete-${target.id}`, async () => {
                     await window.servicePilot.deleteService(target.id);
+                    // 清理已删除服务的日志缓存，释放内存
+                    setLogsByService((current) => {
+                      if (!current[target.id]) {
+                        return current;
+                      }
+                      const next = { ...current };
+                      delete next[target.id];
+                      return next;
+                    });
+                    // 清理已删除服务的 DOM 引用
+                    const refs = logRowRefs.current;
+                    for (const key of Object.keys(refs)) {
+                      if (key.startsWith(`${target.id}:`)) {
+                        delete refs[key];
+                      }
+                    }
                     setDeleteServiceTarget(null);
                     if (selectedLogServiceId === target.id) {
                       setSelectedLogServiceId('');
@@ -3339,6 +3566,105 @@ export function App() {
                   });
                 }}
               />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {scanModalOpen && (
+        <div className="modal-backdrop">
+          <div className="modal modal--scan">
+            <div className="modal__header">
+              <div>
+                <h3>{copy.scanImport}</h3>
+                {scanLoading ? (
+                  <p>{copy.scanningServices}</p>
+                ) : scanResults.length > 0 ? (
+                  <p>{copy.detectedServices(scanResults.length)}</p>
+                ) : (
+                  <p>{copy.noServicesDetected}</p>
+                )}
+              </div>
+              <button className="modal__close" onClick={() => { setScanModalOpen(false); setScanResults([]); setScanSelected(new Set()); setScanGroupIds([]); }} type="button">
+                <AppIcon icon="close" size={16} />
+              </button>
+            </div>
+
+            <div className="modal__body modal__body--scan">
+              {scanLoading ? (
+                <div className="pilot-loading">
+                  <div className="pilot-loading__spinner" />
+                </div>
+              ) : scanResults.length > 0 ? (
+                <>
+                  <div className="scan-toolbar">
+                    <button
+                      className="action-button action-button--default action-button--compact"
+                      onClick={handleToggleSelectAll}
+                      type="button"
+                    >
+                      {copy.selectAll} ({scanSelected.size}/{scanResults.length})
+                    </button>
+                  </div>
+                  {snapshot.groups.length > 0 && (
+                    <div className="scan-group-select">
+                      <span className="scan-group-select__label">{copy.group}</span>
+                      {snapshot.groups.map((group) => {
+                        const checked = scanGroupIds.includes(group.id);
+                        return (
+                          <label className={`scan-group-select__item ${checked ? 'scan-group-select__item--checked' : ''}`} key={group.id}>
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={(event) => {
+                                setScanGroupIds(
+                                  event.target.checked
+                                    ? [...scanGroupIds, group.id]
+                                    : scanGroupIds.filter((id) => id !== group.id)
+                                );
+                              }}
+                            />
+                            <span>{group.name || '—'}</span>
+                            <span className="scan-group-select__count">{group.serviceIds.length}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  )}
+                  <div className="scan-list">
+                    {scanResults.map((service) => (
+                      <label className={`scan-row ${scanSelected.has(service.workingDir) ? 'scan-row--checked' : ''}`} key={service.workingDir}>
+                        <input
+                          type="checkbox"
+                          checked={scanSelected.has(service.workingDir)}
+                          onChange={() => handleToggleScanSelect(service.workingDir)}
+                        />
+                        <span className="scan-row__name">{service.name}</span>
+                        {service.port && <span className="scan-row__port">:{service.port}</span>}
+                        <span className="scan-row__dir" title={service.workingDir}>{service.workingDir}</span>
+                      </label>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <div className="pilot-empty-state pilot-empty-state--compact">
+                  <div>{copy.noServicesDetected}</div>
+                </div>
+              )}
+            </div>
+
+            <div className="modal__footer">
+              <ActionButton compact icon="close" kind="default" label={copy.cancel} onClick={() => { setScanModalOpen(false); setScanResults([]); setScanSelected(new Set()); setScanGroupIds([]); }} />
+              {scanResults.length > 0 && (
+                <ActionButton
+                  compact
+                  disabled={busyKey !== '' || scanSelected.size === 0}
+                  icon="addService"
+                  kind="primary"
+                  label={`${copy.importSelected} (${scanSelected.size})`}
+                  onClick={() => void handleBatchImportSelected()}
+                />
+              )}
             </div>
           </div>
         </div>

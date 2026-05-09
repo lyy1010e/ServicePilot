@@ -115,6 +115,21 @@ export interface SaveGroupInput extends Omit<ServiceGroup, 'id'> {
   id?: string;
 }
 
+export interface ScannedService {
+  name: string;
+  workingDir: string;
+  port?: number;
+}
+
+export interface ScanResult {
+  services: ScannedService[];
+}
+
+export interface BatchImportItem {
+  name: string;
+  workingDir: string;
+}
+
 export interface ServicePilotApi {
   getAppVersion: () => Promise<string>;
   checkUpdate: () => Promise<AppUpdateInfo | null>;
@@ -134,6 +149,8 @@ export interface ServicePilotApi {
   importIdeaProject: (projectDir: string) => Promise<ServiceConfig>;
   importState: () => Promise<void>;
   exportState: () => Promise<void>;
+  scanSpringServices: (rootDir: string) => Promise<ScanResult>;
+  batchImportServices: (items: BatchImportItem[]) => Promise<ServiceConfig[]>;
   saveService: (input: SaveServiceInput) => Promise<ServiceConfig>;
   deleteService: (serviceId: string) => Promise<void>;
   startService: (serviceId: string) => Promise<void>;

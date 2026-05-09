@@ -57,6 +57,8 @@ function createMockApi(initialSnapshot: AppSnapshot): ServicePilotApi {
     importIdeaProject: vi.fn().mockResolvedValue(springService()),
     importState: vi.fn().mockResolvedValue(undefined),
     exportState: vi.fn().mockResolvedValue(undefined),
+    scanSpringServices: vi.fn().mockResolvedValue({ services: [] }),
+    batchImportServices: vi.fn().mockResolvedValue([springService()]),
     saveService: vi.fn().mockResolvedValue(springService()),
     deleteService: vi.fn().mockResolvedValue(undefined),
     startService: vi.fn().mockResolvedValue(undefined),
@@ -107,8 +109,19 @@ describe('App service flows', () => {
       command: ''
     });
 
-    await user.click(screen.getByRole('button', { name: 'Add Service' }));
-    await user.click(screen.getByRole('button', { name: 'Choose Project' }));
+    const addButtons = screen.getAllByRole('button', { name: 'Add Service' });
+    await user.click(addButtons[0]);
+
+    // 等待 API 被调用
+    await waitFor(() => {
+      expect(api.detectProject).toHaveBeenCalled();
+    });
+
+    // 等待表单出现
+    await waitFor(() => {
+      expect(screen.getByText('Advanced')).toBeInTheDocument();
+    }, { timeout: 3000 });
+
     await user.click(screen.getByText('Advanced'));
 
     await user.clear(screen.getByPlaceholderText('For example: gateway / user-service'));
