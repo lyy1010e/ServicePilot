@@ -1,7 +1,7 @@
 {
   "$schema": "./gen/schemas/desktop-schema.json",
   "productName": "ServicePilot",
-  "version": "1.0.3",
+  "version": "1.0.5",
   "identifier": "com.servicepilot.desktop",
   "build": {
     "beforeDevCommand": "npm run dev:renderer",
@@ -26,7 +26,9 @@
       }
     ],
     "security": {
-      "capabilities": ["default"]
+      "capabilities": [
+        "default"
+      ]
     }
   },
   "bundle": {
