@@ -85,50 +85,28 @@ npm run build
 
 ### 发布更新
 
+一键发布（推荐）：
+
+```bash
+npm run release -- 1.0.4
+```
+
+该命令会自动完成：更新版本号 → 提交推送 → 打 tag → GitHub Actions 自动构建并创建 Release。
+
+本地手动发布：
+
 ```bash
 npm run release:update
 ```
 
-该命令会构建签名安装包、生成 updater 使用的 `latest.json`，并通过 GitHub CLI 创建或更新当前版本对应的 Release。
+该命令在本地构建签名安装包、生成 updater 使用的 `latest.json`，并通过 GitHub CLI 创建或更新当前版本对应的 Release。发布前需要已安装并登录 GitHub CLI（`gh auth login`），且工作区没有未提交改动。
 
-发布前需要：
-
-- 已安装并登录 GitHub CLI：`gh auth login`
-- 当前工作区没有未提交改动
-- 已在本机配置 Tauri updater 签名私钥
-
-推荐创建本地文件 `.env.release.local`，该文件已被 `.gitignore` 忽略：
+签名密钥配置：推荐创建本地文件 `.env.release.local`（已被 `.gitignore` 忽略）：
 
 ```ini
 TAURI_SIGNING_PRIVATE_KEY_FILE=secrets/tauri-signing.key
 # 如果私钥有密码：
 # TAURI_SIGNING_PRIVATE_KEY_PASSWORD=your-password
-```
-
-然后把私钥内容放到：
-
-```text
-secrets/tauri-signing.key
-```
-
-也可以直接在 `.env.release.local` 里写 `TAURI_SIGNING_PRIVATE_KEY=...`，但更推荐使用文件路径，避免多行私钥转义问题。
-
-可以先预演命令：
-
-```bash
-npm run release:update -- --dry-run
-```
-
-如果已经构建过安装包，也可以只重新生成清单并上传：
-
-```bash
-npm run release:update -- --skip-build
-```
-
-手动生成更新清单：
-
-```bash
-npm run release:manifest
 ```
 
 ## 技术栈
