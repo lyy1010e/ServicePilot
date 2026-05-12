@@ -131,8 +131,6 @@ type Copy = {
   searchLogs: string;
   autoScroll: string;
   clearLogs: string;
-  importConfig: string;
-  exportConfig: string;
   manageGroups: string;
   noServices: string;
   noLogService: string;
@@ -277,8 +275,6 @@ const COPY: Record<AppLanguage, Copy> = {
     searchLogs: '搜索日志内容...',
     autoScroll: '自动滚动',
     clearLogs: '清空日志',
-    importConfig: '导入配置',
-    exportConfig: '导出配置',
     manageGroups: '管理分组',
     noServices: '当前没有符合筛选条件的服务。',
     noLogService: '未选择日志服务',
@@ -432,8 +428,6 @@ const COPY: Record<AppLanguage, Copy> = {
     searchLogs: 'Search log content...',
     autoScroll: 'Auto Scroll',
     clearLogs: 'Clear Logs',
-    importConfig: 'Import Config',
-    exportConfig: 'Export Config',
     manageGroups: 'Manage Groups',
     noServices: 'No services match the current filter.',
     noLogService: 'No log service selected',

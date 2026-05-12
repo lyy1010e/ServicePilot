@@ -27,7 +27,6 @@ ServicePilot has a strict local-development boundary: launch, stop, import, and 
 - Read IDEA/Maven project settings and provide a quick "select project and start" flow.
 - Configure global Maven `settings.xml` and local repository paths.
 - Detect ports and access URLs from startup logs.
-- Import and export ServicePilot-owned local configuration.
 - Switch the app UI between Chinese and English.
 - Package with Tauri 2 on Windows, including tray support, custom window controls, and local process management.
 
