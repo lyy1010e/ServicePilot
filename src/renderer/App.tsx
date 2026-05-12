@@ -1906,16 +1906,6 @@ export function App() {
     }
   }, [selectedLogServiceId, snapshot.services]);
 
-  // 切换日志服务时清理非当前服务的日志缓存，释放内存
-  useEffect(() => {
-    setLogsByService((current) => {
-      const keys = Object.keys(current);
-      if (!selectedLogServiceId || keys.length <= 1) return current;
-      const kept = current[selectedLogServiceId];
-      return kept ? { [selectedLogServiceId]: kept } : {};
-    });
-  }, [selectedLogServiceId]);
-
   useEffect(() => {
     if (selectedGroup === 'all') {
       return;
@@ -2545,9 +2535,7 @@ export function App() {
     const targets = filteredServices.filter((service) => getRuntime(snapshot, service.id).status !== 'running');
     await runAction('batch-start', async () => {
       clearServiceLogsForLaunch(targets.map((service) => service.id));
-      for (const service of targets) {
-        await window.servicePilot.startService(service.id);
-      }
+      await Promise.allSettled(targets.map((service) => window.servicePilot.startService(service.id)));
     });
   }
 
