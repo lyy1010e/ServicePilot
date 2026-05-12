@@ -59,7 +59,7 @@ async function updateCargoVersion(filePath, ver) {
 async function run(cmd, args) {
   console.log(`  ${cmd} ${args.join(' ')}`);
   await new Promise((resolve, reject) => {
-    const child = spawn(cmd, args, { cwd: root, stdio: 'inherit', shell: process.platform === 'win32' });
+    const child = spawn(cmd, args, { cwd: root, stdio: 'inherit' });
     child.on('error', reject);
     child.on('exit', (code) => {
       if (code === 0) resolve();
