@@ -2903,11 +2903,15 @@ async fn install_update(
       .ok_or_else(|| "No verified update is pending. Check for updates first.".to_string())?
   };
 
-  state.backend.shutdown().await?;
+  // 停止服务失败不应阻止更新
+  let _ = state.backend.shutdown().await;
   update
     .download_and_install(|_, _| {}, || {})
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(|error| {
+      eprintln!("[ServicePilot] install_update download_and_install error: {error}");
+      error.to_string()
+    })?;
   app.restart();
 }
 

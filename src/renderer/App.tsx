@@ -1701,6 +1701,7 @@ export function App() {
   const [serviceGroupForm, setServiceGroupForm] = useState<ServiceGroupFormState | null>(null);
   const [deleteServiceTarget, setDeleteServiceTarget] = useState<ServiceConfig | null>(null);
   const [exitConfirmOpen, setExitConfirmOpen] = useState(false);
+  const [updateConfirmOpen, setUpdateConfirmOpen] = useState(false);
   const [settingsForm, setSettingsForm] = useState<SettingsFormState>(() =>
     buildSettingsForm({ language: 'zh-CN', mavenSettingsFile: '', mavenLocalRepository: '', clearLogsOnRestart: true })
   );
@@ -2293,10 +2294,14 @@ export function App() {
   }
 
   async function handleInstallUpdate() {
-    if (!updateInfo || !window.confirm(copy.updateInstallConfirm(updateInfo.version))) {
+    if (!updateInfo) {
       return;
     }
+    setUpdateConfirmOpen(true);
+  }
 
+  async function confirmInstallUpdate() {
+    setUpdateConfirmOpen(false);
     await runAction('install-update', async () => {
       setFeedback({
         message: copy.updateInstalling,
@@ -3731,6 +3736,26 @@ export function App() {
                 kind="danger"
                 label={language === 'zh-CN' ? '退出' : 'Exit'}
                 onClick={() => void window.servicePilot.exitApp()}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {updateConfirmOpen && updateInfo && (
+        <div className="modal-backdrop">
+          <div className="modal modal--exit">
+            <div className="modal__header">
+              <p>{copy.updateInstallConfirm(updateInfo.version)}</p>
+            </div>
+            <div className="modal__footer">
+              <ActionButton compact icon="close" kind="default" label={copy.cancel} onClick={() => setUpdateConfirmOpen(false)} />
+              <ActionButton
+                compact
+                icon="arrowUp"
+                kind="primary"
+                label={copy.installUpdate}
+                onClick={() => void confirmInstallUpdate()}
               />
             </div>
           </div>
