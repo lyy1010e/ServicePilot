@@ -2886,6 +2886,8 @@ textarea {
 
 .batch-menu-wrap {
   position: relative;
+  display: flex;
+  gap: 6px;
 }
 
 .pilot-app[data-theme='light'] .pilot-table-card,
