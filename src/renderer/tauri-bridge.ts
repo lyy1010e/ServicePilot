@@ -2,10 +2,12 @@ import type {
   AppSettings,
   AppSnapshot,
   AppUpdateInfo,
+  BatchImportItem,
   LogEntry,
   ProjectDetection,
   SaveGroupInput,
   SaveServiceInput,
+  ScanResult,
   ServiceConfig,
   ServiceGroup,
   ServicePilotApi
@@ -103,6 +105,8 @@ export function createServicePilotApi(): ServicePilotApi {
     importIdeaProject: (projectDir) => invoke<ServiceConfig>('import_idea_project', { projectDir }),
     importState: () => invoke<void>('import_state'),
     exportState: () => invoke<void>('export_state'),
+    scanSpringServices: (rootDir) => invoke<ScanResult>('scan_spring_services', { rootDir }),
+    batchImportServices: (items) => invoke<ServiceConfig[]>('batch_import_services', { items: items as BatchImportItem[] }),
     saveService: (input) => invoke<ServiceConfig>('save_service', { input: input as SaveServiceInput }),
     deleteService: (serviceId) => invoke<void>('delete_service', { serviceId }),
     startService: (serviceId) => invoke<void>('start_service', { serviceId }),
@@ -118,7 +122,10 @@ export function createServicePilotApi(): ServicePilotApi {
     toggleMaximizeWindow: () => invoke<void>('toggle_maximize_window'),
     startWindowDrag: () => invoke<void>('start_window_drag'),
     closeWindow: () => invoke<void>('close_window'),
+    showWindow: () => invoke<void>('show_window'),
+    exitApp: () => invoke<void>('exit_app'),
     onSnapshot: (listener) => wrapListener<AppSnapshot>('snapshot:update', listener),
-    onLogEntry: (listener) => wrapListener<LogEntry>('log:entry', listener)
+    onLogEntry: (listener) => wrapListener<LogEntry>('log:entry', listener),
+    onCloseRequested: (listener) => wrapListener<void>('close-requested', () => listener())
   };
 }

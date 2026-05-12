@@ -27,7 +27,6 @@ ServicePilot has a strict local-development boundary: launch, stop, import, and 
 - Read IDEA/Maven project settings and provide a quick "select project and start" flow.
 - Configure global Maven `settings.xml` and local repository paths.
 - Detect ports and access URLs from startup logs.
-- Import and export ServicePilot-owned local configuration.
 - Switch the app UI between Chinese and English.
 - Package with Tauri 2 on Windows, including tray support, custom window controls, and local process management.
 
@@ -85,50 +84,28 @@ npm run build
 
 ### Publish Updates
 
+One-command release (recommended):
+
+```bash
+npm run release -- 1.0.4
+```
+
+This automatically: updates version numbers → commits and pushes → creates a tag → GitHub Actions builds and creates the Release.
+
+Local manual release:
+
 ```bash
 npm run release:update
 ```
 
-This command builds signed installer artifacts, generates the updater `latest.json`, and creates or updates the GitHub Release for the current app version through GitHub CLI.
+This builds signed installer artifacts locally, generates the updater `latest.json`, and creates or updates the GitHub Release via GitHub CLI. Requires GitHub CLI authenticated (`gh auth login`) and a clean working tree.
 
-Before publishing:
-
-- Install and authenticate GitHub CLI: `gh auth login`
-- Keep the working tree clean
-- Configure the Tauri updater signing private key on this machine
-
-Recommended local `.env.release.local` file, which is ignored by `.gitignore`:
+Signing key setup: create a local `.env.release.local` file (ignored by `.gitignore`):
 
 ```ini
 TAURI_SIGNING_PRIVATE_KEY_FILE=secrets/tauri-signing.key
 # If the key has a password:
 # TAURI_SIGNING_PRIVATE_KEY_PASSWORD=your-password
-```
-
-Then put the private key content in:
-
-```text
-secrets/tauri-signing.key
-```
-
-You can also set `TAURI_SIGNING_PRIVATE_KEY=...` directly in `.env.release.local`, but the file path form is recommended to avoid escaping multiline keys.
-
-Preview the commands first:
-
-```bash
-npm run release:update -- --dry-run
-```
-
-If artifacts are already built, regenerate the manifest and upload only:
-
-```bash
-npm run release:update -- --skip-build
-```
-
-Generate the updater manifest manually:
-
-```bash
-npm run release:manifest
 ```
 
 ## Tech Stack

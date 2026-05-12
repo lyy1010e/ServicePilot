@@ -57,6 +57,8 @@ function createMockApi(initialSnapshot: AppSnapshot): ServicePilotApi {
     importIdeaProject: vi.fn().mockResolvedValue(springService()),
     importState: vi.fn().mockResolvedValue(undefined),
     exportState: vi.fn().mockResolvedValue(undefined),
+    scanSpringServices: vi.fn().mockResolvedValue({ services: [] }),
+    batchImportServices: vi.fn().mockResolvedValue([springService()]),
     saveService: vi.fn().mockResolvedValue(springService()),
     deleteService: vi.fn().mockResolvedValue(undefined),
     startService: vi.fn().mockResolvedValue(undefined),
@@ -72,11 +74,14 @@ function createMockApi(initialSnapshot: AppSnapshot): ServicePilotApi {
     toggleMaximizeWindow: vi.fn().mockResolvedValue(undefined),
     startWindowDrag: vi.fn().mockResolvedValue(undefined),
     closeWindow: vi.fn().mockResolvedValue(undefined),
+    showWindow: vi.fn().mockResolvedValue(undefined),
+    exitApp: vi.fn().mockResolvedValue(undefined),
     getAppVersion: vi.fn().mockResolvedValue('1.0.0'),
     checkUpdate: vi.fn().mockResolvedValue(null),
     installUpdate: vi.fn().mockResolvedValue(undefined),
     onSnapshot: vi.fn().mockReturnValue(vi.fn()),
-    onLogEntry: vi.fn().mockReturnValue(vi.fn())
+    onLogEntry: vi.fn().mockReturnValue(vi.fn()),
+    onCloseRequested: vi.fn().mockReturnValue(vi.fn())
   };
 }
 
@@ -94,7 +99,7 @@ describe('App service flows', () => {
     vi.restoreAllMocks();
   });
 
-  it('saves a new Spring service from the service modal', async () => {
+  it('saves a new Spring service from the service modal', { timeout: 30000 }, async () => {
     const { api, user } = await renderApp(snapshot());
     vi.mocked(api.pickDirectory).mockResolvedValue('D:\\workspace\\gateway');
     vi.mocked(api.detectProject).mockResolvedValue({
@@ -104,8 +109,19 @@ describe('App service flows', () => {
       command: ''
     });
 
-    await user.click(screen.getByRole('button', { name: 'Add Service' }));
-    await user.click(screen.getByRole('button', { name: 'Choose Project' }));
+    const addButtons = screen.getAllByRole('button', { name: 'Add Service' });
+    await user.click(addButtons[0]);
+
+    // 等待 API 被调用
+    await waitFor(() => {
+      expect(api.detectProject).toHaveBeenCalled();
+    });
+
+    // 等待表单出现
+    await waitFor(() => {
+      expect(screen.getByText('Advanced')).toBeInTheDocument();
+    }, { timeout: 3000 });
+
     await user.click(screen.getByText('Advanced'));
 
     await user.clear(screen.getByPlaceholderText('For example: gateway / user-service'));

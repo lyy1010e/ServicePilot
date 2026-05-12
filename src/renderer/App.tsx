@@ -4,10 +4,12 @@ import type {
   AppLanguage,
   AppSnapshot,
   AppUpdateInfo,
+  BatchImportItem,
   LogEntry,
   RuntimeState,
   SaveGroupInput,
   SaveServiceInput,
+  ScannedService,
   ServiceConfig,
   ServiceGroup,
   ServiceKind
@@ -129,8 +131,6 @@ type Copy = {
   searchLogs: string;
   autoScroll: string;
   clearLogs: string;
-  importConfig: string;
-  exportConfig: string;
   manageGroups: string;
   noServices: string;
   noLogService: string;
@@ -216,6 +216,14 @@ type Copy = {
   updateAvailable: (version: string) => string;
   updateInstalling: string;
   updateInstallConfirm: (version: string) => string;
+  scanImport: string;
+  scanningServices: string;
+  detectedServices: (count: number) => string;
+  selectAll: string;
+  importSelected: string;
+  noServicesDetected: string;
+  scanFailed: string;
+  servicesImported: (count: number) => string;
 };
 
 const COPY: Record<AppLanguage, Copy> = {
@@ -267,8 +275,6 @@ const COPY: Record<AppLanguage, Copy> = {
     searchLogs: '搜索日志内容...',
     autoScroll: '自动滚动',
     clearLogs: '清空日志',
-    importConfig: '导入配置',
-    exportConfig: '导出配置',
     manageGroups: '管理分组',
     noServices: '当前没有符合筛选条件的服务。',
     noLogService: '未选择日志服务',
@@ -364,7 +370,15 @@ const COPY: Record<AppLanguage, Copy> = {
     installUpdate: '立即更新',
     updateAvailable: (version) => `发现新版本 ${version}。`,
     updateInstalling: '正在下载更新并应用，完成后应用会自动重启。',
-    updateInstallConfirm: (version) => `将直接更新到 ServicePilot ${version}，更新前会停止正在运行的服务。继续吗？`
+    updateInstallConfirm: (version) => `将直接更新到 ServicePilot ${version}，更新前会停止正在运行的服务。继续吗？`,
+    scanImport: '扫描导入',
+    scanningServices: '扫描中...',
+    detectedServices: (count) => `检测到 ${count} 个 Spring Boot 服务`,
+    selectAll: '全选',
+    importSelected: '导入选中服务',
+    noServicesDetected: '未检测到 Spring Boot 服务',
+    scanFailed: '扫描失败',
+    servicesImported: (count) => `已导入 ${count} 个服务`
   },
   'en-US': {
     appName: 'ServicePilot',
@@ -414,8 +428,6 @@ const COPY: Record<AppLanguage, Copy> = {
     searchLogs: 'Search log content...',
     autoScroll: 'Auto Scroll',
     clearLogs: 'Clear Logs',
-    importConfig: 'Import Config',
-    exportConfig: 'Export Config',
     manageGroups: 'Manage Groups',
     noServices: 'No services match the current filter.',
     noLogService: 'No log service selected',
@@ -512,7 +524,15 @@ const COPY: Record<AppLanguage, Copy> = {
     installUpdate: 'Update Now',
     updateAvailable: (version) => `Version ${version} is available.`,
     updateInstalling: 'Downloading and applying the update. The app will restart when it is done.',
-    updateInstallConfirm: (version) => `Update directly to ServicePilot ${version}? Running services will be stopped first.`
+    updateInstallConfirm: (version) => `Update directly to ServicePilot ${version}? Running services will be stopped first.`,
+    scanImport: 'Scan & Import',
+    scanningServices: 'Scanning...',
+    detectedServices: (count) => `Detected ${count} Spring Boot services`,
+    selectAll: 'Select All',
+    importSelected: 'Import Selected',
+    noServicesDetected: 'No Spring Boot services detected',
+    scanFailed: 'Scan failed',
+    servicesImported: (count) => `Imported ${count} services`
   }
 };
 
@@ -541,6 +561,7 @@ type ServiceFormState = {
   mavenForceUpdate: boolean;
   mavenDebugMode: boolean;
   mavenDisableFork: boolean;
+  groupIds: string[];
 };
 
 type GroupFormState = {
@@ -838,7 +859,7 @@ function AppIcon({ icon, size = 18, className = '' }: { icon: IconName; size?: n
   }
 }
 
-function buildServiceForm(service?: ServiceConfig): ServiceFormState {
+function buildServiceForm(service?: ServiceConfig, groups?: ServiceGroup[]): ServiceFormState {
   return {
     id: service?.id,
     name: service?.name ?? '',
@@ -859,7 +880,10 @@ function buildServiceForm(service?: ServiceConfig): ServiceFormState {
     frontendScript: service?.frontendScript ?? 'dev',
     mavenForceUpdate: service?.mavenForceUpdate ?? false,
     mavenDebugMode: service?.mavenDebugMode ?? false,
-    mavenDisableFork: service?.mavenDisableFork ?? false
+    mavenDisableFork: service?.mavenDisableFork ?? false,
+    groupIds: service && groups
+      ? groups.filter((group) => group.serviceIds.includes(service.id)).map((group) => group.id)
+      : []
   };
 }
 
@@ -1132,6 +1156,8 @@ function shouldAppendToPreviousLog(previous: LogEntry | undefined, entry: LogEnt
   );
 }
 
+const MAX_MERGE_TEXT_LENGTH = 100 * 1024; // 100 KB — 防止单条合并日志无限增长
+
 function mergeLogEntries(entries: LogEntry[], entry: LogEntry): LogEntry[] {
   const previous = entries[entries.length - 1];
   if (previous?.id === entry.id) {
@@ -1140,9 +1166,12 @@ function mergeLogEntries(entries: LogEntry[], entry: LogEntry): LogEntry[] {
   if (!shouldAppendToPreviousLog(previous, entry)) {
     return [...entries, entry].slice(-2000);
   }
+  const combined = `${previous.text}\n${entry.text}`;
   const merged = {
     ...previous,
-    text: `${previous.text}\n${entry.text}`
+    text: combined.length > MAX_MERGE_TEXT_LENGTH
+      ? combined.slice(-MAX_MERGE_TEXT_LENGTH)
+      : combined
   };
   return [...entries.slice(0, -1), merged].slice(-2000);
 }
@@ -1466,39 +1495,194 @@ function renderLogSearchHighlight(text: string, query: string, active: boolean) 
   return segments;
 }
 
-const LogTerminalRow = memo(function LogTerminalRow({
-  entry,
+const ITEM_HEIGHT_ESTIMATE = 22;
+const OVERSCAN = 10;
+
+const VirtualLogList = memo(function VirtualLogList({
+  items,
   searchQuery,
-  activeSearchMatch,
-  registerRow
+  activeSearchMatchId,
+  autoScroll,
+  onAutoScrollChange,
+  emptyTitle,
+  emptyDesc
 }: {
-  entry: LogEntry;
+  items: LogEntry[];
   searchQuery: string;
-  activeSearchMatch: boolean;
-  registerRow: (id: string, node: HTMLDivElement | null) => void;
+  activeSearchMatchId: string | undefined;
+  autoScroll: boolean;
+  onAutoScrollChange: (value: boolean) => void;
+  emptyTitle: string;
+  emptyDesc: string;
 }) {
-  const level = getLogLevel(entry);
-  const highlight = isRootCauseLog(entry);
-  const message = getLogMessage(entry);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [containerHeight, setContainerHeight] = useState(0);
+  const [measuredHeights, setMeasuredHeights] = useState<Record<string, number>>({});
+  const userScrolledRef = useRef(false);
+  const rowRefs = useRef<Record<string, HTMLDivElement | null>>({});
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setContainerHeight(entry.contentRect.height);
+      }
+    });
+    observer.observe(el);
+    setContainerHeight(el.clientHeight);
+    return () => observer.disconnect();
+  }, []);
+
+  // 测量已渲染行的实际高度
+  const measureRow = useCallback((id: string, node: HTMLDivElement | null) => {
+    if (!node) return;
+    rowRefs.current[id] = node;
+    const h = node.offsetHeight;
+    if (h > 0) {
+      setMeasuredHeights((prev) => (prev[id] === h ? prev : { ...prev, [id]: h }));
+    }
+  }, []);
+
+  // 自动滚动到底部
+  useEffect(() => {
+    if (!autoScroll || !containerRef.current) return;
+    const el = containerRef.current;
+    el.scrollTop = el.scrollHeight;
+    const frame = requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
+    return () => cancelAnimationFrame(frame);
+  }, [autoScroll, items.length]);
+
+  // 容器大小变化时，如果在底部则保持底部
+  useEffect(() => {
+    if (!autoScroll || !containerRef.current) return;
+    containerRef.current.scrollTop = containerRef.current.scrollHeight;
+  }, [containerHeight, autoScroll]);
+
+  // 搜索跳转
+  useEffect(() => {
+    if (!activeSearchMatchId || !containerRef.current) return;
+    const idx = items.findIndex((e) => e.id === activeSearchMatchId);
+    if (idx < 0) return;
+    let top = 0;
+    for (let i = 0; i < idx; i++) top += measuredHeights[items[i].id] || ITEM_HEIGHT_ESTIMATE;
+    const rowH = measuredHeights[activeSearchMatchId] || ITEM_HEIGHT_ESTIMATE;
+    const el = containerRef.current;
+    const targetTop = top - el.clientHeight / 2 + rowH / 2;
+    el.scrollTop = Math.max(0, targetTop);
+  }, [activeSearchMatchId, items, measuredHeights]);
+
+  const handleScroll = useCallback(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    setScrollTop(el.scrollTop);
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 30;
+    if (!atBottom) {
+      userScrolledRef.current = true;
+      if (autoScroll) onAutoScrollChange(false);
+    } else {
+      userScrolledRef.current = false;
+      if (!autoScroll) onAutoScrollChange(true);
+    }
+  }, [autoScroll, onAutoScrollChange]);
+
+  // 计算总高度和可见范围
+  const { totalHeight, startIndex, endIndex, offsetY } = useMemo(() => {
+    let total = 0;
+    for (let i = 0; i < items.length; i++) {
+      total += measuredHeights[items[i].id] || ITEM_HEIGHT_ESTIMATE;
+    }
+
+    let acc = 0;
+    let start = 0;
+    for (let i = 0; i < items.length; i++) {
+      const h = measuredHeights[items[i].id] || ITEM_HEIGHT_ESTIMATE;
+      if (acc + h >= scrollTop) { start = i; break; }
+      acc += h;
+      if (i === items.length - 1) start = i;
+    }
+
+    const visibleStart = Math.max(0, start - OVERSCAN);
+    let visibleEnd = start;
+    let consumed = acc;
+    for (let i = start; i < items.length; i++) {
+      consumed += measuredHeights[items[i].id] || ITEM_HEIGHT_ESTIMATE;
+      visibleEnd = i;
+      if (consumed >= scrollTop + containerHeight) break;
+    }
+    visibleEnd = Math.min(items.length - 1, visibleEnd + OVERSCAN);
+
+    let topPad = 0;
+    for (let i = 0; i < visibleStart; i++) {
+      topPad += measuredHeights[items[i].id] || ITEM_HEIGHT_ESTIMATE;
+    }
+
+    return { totalHeight: total, startIndex: visibleStart, endIndex: visibleEnd, offsetY: topPad };
+  }, [items, scrollTop, containerHeight, measuredHeights]);
+
+  const visibleItems = items.slice(startIndex, endIndex + 1);
 
   return (
     <div
-      className={`pilot-terminal__row ${highlight ? 'pilot-terminal__row--highlight' : ''} ${
-        activeSearchMatch ? 'pilot-terminal__row--search-current' : ''
-      }`}
-      ref={(node) => registerRow(entry.id, node)}
+      ref={containerRef}
+      className="pilot-terminal__body"
+      onScroll={handleScroll}
+      style={{ overflow: 'auto' }}
     >
-      <span className="pilot-terminal__time">{formatLogTime(entry.timestamp)}</span>
-      <span className={`pilot-terminal__level pilot-terminal__level--${level.toLowerCase()}`}>{level}</span>
-      <span className={`pilot-terminal__text ${highlight ? 'pilot-terminal__text--highlight' : ''}`}>
-        {renderLogSearchHighlight(message, searchQuery, activeSearchMatch)}
-      </span>
+      <div style={{ height: totalHeight, position: 'relative' }}>
+        <div style={{ transform: `translateY(${offsetY}px)` }}>
+          {visibleItems.map((entry) => {
+            const level = getLogLevel(entry);
+            const highlight = isRootCauseLog(entry);
+            const message = getLogMessage(entry);
+            return (
+              <div
+                key={entry.id}
+                ref={(node) => measureRow(entry.id, node)}
+                className={`pilot-terminal__row ${highlight ? 'pilot-terminal__row--highlight' : ''} ${
+                  activeSearchMatchId === entry.id ? 'pilot-terminal__row--search-current' : ''
+                }`}
+              >
+                <span className="pilot-terminal__time">{formatLogTime(entry.timestamp)}</span>
+                <span className={`pilot-terminal__level pilot-terminal__level--${level.toLowerCase()}`}>{level}</span>
+                <span className={`pilot-terminal__text ${highlight ? 'pilot-terminal__text--highlight' : ''}`}>
+                  {renderLogSearchHighlight(message, searchQuery, activeSearchMatchId === entry.id)}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      {!items.length && (
+        <div className="pilot-terminal__empty">
+          <div className="pilot-terminal__empty-icon">
+            <AppIcon icon="log" size={26} />
+          </div>
+          <div className="pilot-terminal__empty-title">{emptyTitle}</div>
+          <div className="pilot-terminal__empty-desc">{emptyDesc}</div>
+        </div>
+      )}
     </div>
   );
 });
 
+const ServiceRuntimeDuration = memo(function ServiceRuntimeDuration({ runtime }: { runtime: RuntimeState | undefined }) {
+  const [now, setNow] = useState(Date.now());
+  const isActive = runtime && (runtime.status === 'running' || runtime.status === 'starting' || runtime.status === 'stopping') && runtime.startedAt;
+  useEffect(() => {
+    if (!isActive) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [isActive]);
+  return <div className="service-row__runtime">{formatDuration(runtime, now)}</div>;
+});
+
 export function App() {
   const [snapshot, setSnapshot] = useState<AppSnapshot>(EMPTY_SNAPSHOT);
+  const [isReady, setIsReady] = useState(false);
+  const snapshotRef = useRef(snapshot);
+  snapshotRef.current = snapshot;
   const [logsByService, setLogsByService] = useState<Record<string, LogEntry[]>>({});
   const [selectedGroup, setSelectedGroup] = useState<GroupSelection>('all');
   const [serviceSearch, setServiceSearch] = useState('');
@@ -1511,20 +1695,24 @@ export function App() {
   const [rowMenuServiceId, setRowMenuServiceId] = useState('');
   const [selectedWorkspaceGroupId, setSelectedWorkspaceGroupId] = useState('');
   const [groupMenuId, setGroupMenuId] = useState('');
-  const [batchMenuOpen, setBatchMenuOpen] = useState(false);
   const [serviceGroupSearch, setServiceGroupSearch] = useState('');
   const [serviceForm, setServiceForm] = useState<ServiceFormState | null>(null);
   const [groupForm, setGroupForm] = useState<GroupFormState | null>(null);
   const [serviceGroupForm, setServiceGroupForm] = useState<ServiceGroupFormState | null>(null);
   const [deleteServiceTarget, setDeleteServiceTarget] = useState<ServiceConfig | null>(null);
+  const [exitConfirmOpen, setExitConfirmOpen] = useState(false);
   const [settingsForm, setSettingsForm] = useState<SettingsFormState>(() =>
     buildSettingsForm({ language: 'zh-CN', mavenSettingsFile: '', mavenLocalRepository: '', clearLogsOnRestart: true })
   );
   const [feedback, setFeedback] = useState<FeedbackState>(null);
   const [busyKey, setBusyKey] = useState('');
-  const [now, setNow] = useState(Date.now());
   const [appVersion, setAppVersion] = useState('1.0.0');
   const [updateInfo, setUpdateInfo] = useState<AppUpdateInfo | null>(null);
+  const [scanModalOpen, setScanModalOpen] = useState(false);
+  const [scanResults, setScanResults] = useState<ScannedService[]>([]);
+  const [scanSelected, setScanSelected] = useState<Set<string>>(new Set());
+  const [scanLoading, setScanLoading] = useState(false);
+  const [scanGroupIds, setScanGroupIds] = useState<string[]>([]);
 
   const language = snapshot.settings.language;
   const copy = COPY[language];
@@ -1556,26 +1744,23 @@ export function App() {
   );
   const deferredServiceSearch = useDeferredValue(serviceSearch.trim().toLowerCase());
   const deferredLogQuery = useDeferredValue(logQuery.trim().toLowerCase());
-  const logStreamRef = useRef<HTMLDivElement | null>(null);
   const autoScrollPausedBySearchRef = useRef(false);
-  const logRowRefs = useRef<Record<string, HTMLDivElement | null>>({});
-  const registerLogRow = useCallback((id: string, node: HTMLDivElement | null) => {
-    if (node) {
-      logRowRefs.current[id] = node;
-      return;
+  const selectedLogServiceIdRef = useRef(selectedLogServiceId);
+  selectedLogServiceIdRef.current = selectedLogServiceId;
+
+  const handleCloseAttempt = useCallback(() => {
+    const current = snapshotRef.current;
+    const hasRunning = current.services.some((service) => {
+      const status = (current.runtime[service.id]?.status ?? 'stopped') as string;
+      return status === 'running' || status === 'starting' || status === 'stopping';
+    });
+    if (hasRunning) {
+      setExitConfirmOpen(true);
+    } else {
+      void window.servicePilot.exitApp();
     }
-    delete logRowRefs.current[id];
   }, []);
 
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      setNow(Date.now());
-    }, 1000);
-
-    return () => {
-      window.clearInterval(timer);
-    };
-  }, []);
 
   useEffect(() => {
     let disposed = false;
@@ -1598,42 +1783,51 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    if (!isReady) { return; }
     let disposed = false;
-
-    window.servicePilot
-      .checkUpdate()
-      .then((nextUpdate) => {
-        if (!disposed) {
-          setUpdateInfo(nextUpdate);
-        }
-      })
-      .catch(() => {
-        if (!disposed) {
-          setUpdateInfo(null);
-        }
-      });
-
+    const timer = window.setTimeout(() => {
+      window.servicePilot
+        .checkUpdate()
+        .then((nextUpdate) => {
+          if (!disposed) {
+            setUpdateInfo(nextUpdate);
+          }
+        })
+        .catch(() => {
+          if (!disposed) {
+            setUpdateInfo(null);
+          }
+        });
+    }, 3000);
     return () => {
       disposed = true;
+      window.clearTimeout(timer);
     };
-  }, []);
+  }, [isReady]);
 
   useEffect(() => {
     let disposed = false;
 
+    performance.mark('sp-snapshot-start');
     window.servicePilot
       .getSnapshot()
       .then((nextSnapshot) => {
         if (!disposed) {
+          performance.mark('sp-snapshot-end');
+          performance.measure('sp: getSnapshot IPC', 'sp-snapshot-start', 'sp-snapshot-end');
           setSnapshot(nextSnapshot);
+          setIsReady(true);
         }
       })
       .catch((error) => {
         if (!disposed) {
+          performance.mark('sp-snapshot-end');
+          performance.measure('sp: getSnapshot IPC (failed)', 'sp-snapshot-start', 'sp-snapshot-end');
           setFeedback({
             message: error instanceof Error ? error.message : copy.initFailed,
             tone: 'error'
           });
+          setIsReady(true);
         }
       });
 
@@ -1644,6 +1838,11 @@ export function App() {
     const offLog = window.servicePilot.onLogEntry((entry) => {
       startTransition(() => {
         setLogsByService((current) => {
+          // 只为当前选中的服务累积实时日志，其他服务切换时从 getLogHistory 加载
+          const selectedId = snapshotRef.current.services.length > 0 ? selectedLogServiceIdRef.current : '';
+          if (selectedId && entry.serviceId !== selectedId) {
+            return current;
+          }
           const entries = current[entry.serviceId] ?? [];
           return {
             ...current,
@@ -1653,10 +1852,15 @@ export function App() {
       });
     });
 
+    const offCloseRequested = window.servicePilot.onCloseRequested(() => {
+      handleCloseAttempt();
+    });
+
     return () => {
       disposed = true;
       offSnapshot();
       offLog();
+      offCloseRequested();
     };
   }, [copy.initFailed]);
 
@@ -1673,6 +1877,26 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    if (!isReady) { return; }
+    const splash = document.getElementById('splash');
+    if (splash) {
+      splash.classList.add('fade-out');
+      window.setTimeout(() => { splash.remove(); }, 350);
+    }
+    window.servicePilot.showWindow().catch(() => {});
+    try {
+      performance.mark('sp-ready-end');
+      performance.measure('sp: total to interactive', 'sp-bridge-start', 'sp-ready-end');
+      const measures = performance.getEntriesByType('measure');
+      for (const m of measures) {
+        console.log(`[ServicePilot] ${m.name}: ${m.duration.toFixed(1)}ms`);
+      }
+    } catch {
+      // performance marks may not exist in test environment
+    }
+  }, [isReady]);
+
+  useEffect(() => {
     if (!snapshot.services.length) {
       setSelectedLogServiceId('');
       return;
@@ -1681,6 +1905,16 @@ export function App() {
       setSelectedLogServiceId(snapshot.services[0].id);
     }
   }, [selectedLogServiceId, snapshot.services]);
+
+  // 切换日志服务时清理非当前服务的日志缓存，释放内存
+  useEffect(() => {
+    setLogsByService((current) => {
+      const keys = Object.keys(current);
+      if (!selectedLogServiceId || keys.length <= 1) return current;
+      const kept = current[selectedLogServiceId];
+      return kept ? { [selectedLogServiceId]: kept } : {};
+    });
+  }, [selectedLogServiceId]);
 
   useEffect(() => {
     if (selectedGroup === 'all') {
@@ -1749,8 +1983,6 @@ export function App() {
   const hasLogQuery = Boolean(deferredLogQuery);
   const logMatchCount = hasLogQuery ? filteredLogEntries.length : 0;
   const activeLogMatchEntryId = hasLogQuery ? filteredLogEntries[logMatchIndex]?.id : undefined;
-  const lastFilteredLogEntry = filteredLogEntries[filteredLogEntries.length - 1];
-  const logScrollSignal = lastFilteredLogEntry ? `${lastFilteredLogEntry.id}:${lastFilteredLogEntry.text.length}` : '';
   const logSearchStatusText = hasLogQuery
     ? logMatchCount
       ? `${Math.min(logMatchIndex + 1, logMatchCount)} / ${logMatchCount}`
@@ -1805,38 +2037,6 @@ export function App() {
     }
     setLogMatchIndex(Math.max(0, logMatchCount - 1));
   }, [logMatchCount, logMatchIndex]);
-
-  useLayoutEffect(() => {
-    if (!autoScroll || !logStreamRef.current) {
-      return;
-    }
-    const scrollToBottom = () => {
-      if (logStreamRef.current) {
-        logStreamRef.current.scrollTop = logStreamRef.current.scrollHeight;
-      }
-    };
-    scrollToBottom();
-    const frame = window.requestAnimationFrame(scrollToBottom);
-    const timer = window.setTimeout(scrollToBottom, 0);
-
-    return () => {
-      window.cancelAnimationFrame(frame);
-      window.clearTimeout(timer);
-    };
-  }, [activeNav, autoScroll, logScrollSignal, selectedLogServiceId]);
-
-  useLayoutEffect(() => {
-    if (!activeLogMatchEntryId || !logStreamRef.current) {
-      return;
-    }
-
-    const row = logRowRefs.current[activeLogMatchEntryId];
-    if (!row) {
-      return;
-    }
-
-    row.scrollIntoView({ block: 'center', behavior: 'auto' });
-  }, [activeLogMatchEntryId, activeNav]);
 
   useEffect(() => {
     if (!feedback) {
@@ -1960,20 +2160,127 @@ export function App() {
     });
   }
 
-  async function handleQuickImportProject() {
+  async function handleScanImport() {
     const defaultPath = snapshot.services[0]?.workingDir || undefined;
     const projectDir = await window.servicePilot.pickDirectory(defaultPath);
     if (!projectDir) {
       return;
     }
 
-    await runAction('import-project', async () => {
-      const service = await window.servicePilot.quickStartProject(projectDir);
-      setSelectedLogServiceId(service.id);
+    setScanLoading(true);
+    setScanResults([]);
+    setScanSelected(new Set());
+
+    try {
+      // 先尝试扫描 Spring Boot 服务
+      const result = await window.servicePilot.scanSpringServices(projectDir);
+
+      if (result.services.length > 0) {
+        // 扫描到 Spring Boot 服务，显示列表让用户选择
+        setScanResults(result.services);
+        setScanSelected(new Set(result.services.map((s) => s.workingDir)));
+        setScanModalOpen(true);
+      } else {
+        // 没扫描到 Spring Boot 服务，尝试检测前端项目
+        const detected = await window.servicePilot.detectProject(projectDir);
+
+        if (detected.serviceKind === 'vue') {
+          // 是前端项目，直接导入
+          await runAction('import-project', async () => {
+            const service = await window.servicePilot.importProject(projectDir);
+            setSelectedLogServiceId(service.id);
+            setFeedback({
+              message: copy.servicesImported(1),
+              tone: 'success'
+            });
+          });
+        } else {
+          // 都不是，打开表单让用户手动填写
+          setServiceForm({
+            ...buildServiceForm(),
+            workingDir: projectDir
+          });
+        }
+      }
+    } catch (error) {
       setFeedback({
-        message: copy.ideaProjectStarted,
-        tone: 'success'
+        message: error instanceof Error ? error.message : copy.scanFailed,
+        tone: 'error'
       });
+    } finally {
+      setScanLoading(false);
+    }
+  }
+
+  function handleToggleScanSelect(workingDir: string) {
+    setScanSelected((current) => {
+      const next = new Set(current);
+      if (next.has(workingDir)) {
+        next.delete(workingDir);
+      } else {
+        next.add(workingDir);
+      }
+      return next;
+    });
+  }
+
+  function handleToggleSelectAll() {
+    if (scanSelected.size === scanResults.length) {
+      setScanSelected(new Set());
+    } else {
+      setScanSelected(new Set(scanResults.map((s) => s.workingDir)));
+    }
+  }
+
+  async function handleBatchImportSelected() {
+    const items: BatchImportItem[] = scanResults
+      .filter((s) => scanSelected.has(s.workingDir))
+      .map((s) => ({ name: s.name, workingDir: s.workingDir }));
+
+    if (!items.length) {
+      return;
+    }
+
+    const assignGroupIds = [...scanGroupIds];
+
+    await runAction('batch-import', async () => {
+      const imported = await window.servicePilot.batchImportServices(items);
+
+      if (imported.length && assignGroupIds.length) {
+        const importedIds = new Set(imported.map((s) => s.id));
+        for (const groupId of assignGroupIds) {
+          const group = snapshot.groups.find((g) => g.id === groupId);
+          if (!group) {
+            continue;
+          }
+          const existingIds = group.serviceIds.filter((id) => !importedIds.has(id));
+          await window.servicePilot.saveGroup({
+            id: group.id,
+            name: group.name,
+            serviceIds: [...existingIds, ...imported.map((s) => s.id)]
+          });
+        }
+      }
+
+      setScanModalOpen(false);
+      setScanResults([]);
+      setScanSelected(new Set());
+      setScanGroupIds([]);
+      if (imported.length) {
+        setSelectedLogServiceId(imported[0].id);
+      }
+      const failed = items.length - imported.length;
+      if (failed > 0) {
+        setFeedback({
+          message: copy.servicesImported(imported.length) + `，${failed} 个导入失败`,
+          tone: imported.length > 0 ? 'success' : 'error'
+        });
+      } else {
+        setFeedback({
+          message: copy.servicesImported(imported.length),
+          tone: 'success'
+        });
+      }
     });
   }
 
@@ -2094,6 +2401,24 @@ export function App() {
     if (isSimpleDirectoryImportForm(serviceForm)) {
       await runAction('import-project-service', async () => {
         const service = await window.servicePilot.importProject(serviceForm.workingDir.trim());
+
+        // 保存分组关系
+        if (serviceForm.groupIds.length > 0) {
+          const targetGroupIds = new Set(serviceForm.groupIds);
+          for (const group of snapshot.groups) {
+            const shouldInclude = targetGroupIds.has(group.id);
+            if (!shouldInclude) {
+              continue;
+            }
+
+            await window.servicePilot.saveGroup({
+              id: group.id,
+              name: group.name,
+              serviceIds: [...group.serviceIds, service.id]
+            });
+          }
+        }
+
         setSelectedLogServiceId(service.id);
         setServiceForm(null);
       });
@@ -2136,7 +2461,28 @@ export function App() {
     };
 
     await runAction(`save-service-${payload.id ?? 'new'}`, async () => {
-      await window.servicePilot.saveService(payload);
+      const saved = await window.servicePilot.saveService(payload);
+
+      // 保存分组关系
+      if (serviceForm.groupIds.length > 0) {
+        const targetGroupIds = new Set(serviceForm.groupIds);
+        for (const group of snapshot.groups) {
+          const currentlyIncluded = group.serviceIds.includes(saved.id);
+          const shouldInclude = targetGroupIds.has(group.id);
+          if (currentlyIncluded === shouldInclude) {
+            continue;
+          }
+
+          await window.servicePilot.saveGroup({
+            id: group.id,
+            name: group.name,
+            serviceIds: shouldInclude
+              ? [...group.serviceIds, saved.id]
+              : group.serviceIds.filter((id) => id !== saved.id)
+          });
+        }
+      }
+
       setServiceForm(null);
     });
   }
@@ -2329,7 +2675,7 @@ export function App() {
               aria-label="Close window"
               className="pilot-window-control pilot-window-control--close"
               data-no-window-drag
-              onClick={() => void window.servicePilot.closeWindow()}
+              onClick={handleCloseAttempt}
               title={language === 'zh-CN' ? '关闭' : 'Close'}
               type="button"
             >
@@ -2400,7 +2746,11 @@ export function App() {
         </aside>
 
         <main className="pilot-main">
-          {activeNav === 'groups' ? (
+          {!isReady ? (
+            <div className="pilot-loading">
+              <div className="pilot-loading__spinner" />
+            </div>
+          ) : activeNav === 'groups' ? (
             <section className="pilot-surface pilot-surface--groups">
               <section className="pilot-group-hero">
                 <div>
@@ -2762,54 +3112,25 @@ export function App() {
                   />
                   <div className="batch-menu-wrap">
                     <button
-                      className="action-button action-button--default action-button--compact"
+                      className="action-button action-button--success action-button--compact"
                       disabled={busyKey !== ''}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        setBatchMenuOpen((current) => !current);
-                      }}
+                      onClick={() => void handleBatchStart()}
                       type="button"
                     >
                       <AppIcon icon="batchStart" size={16} />
-                      <span>{language === 'zh-CN' ? '批量操作' : 'Batch Actions'}</span>
-                      <AppIcon icon="chevronDown" size={14} />
+                      <span>{copy.batchStart}</span>
                     </button>
-                    {batchMenuOpen && (
-                      <div className="floating-menu floating-menu--batch" onClick={(event) => event.stopPropagation()}>
-                        <button
-                          className="floating-menu__item floating-menu__item--success"
-                          onClick={() => {
-                            setBatchMenuOpen(false);
-                            void handleBatchStart();
-                          }}
-                          type="button"
-                        >
-                          {copy.batchStart}
-                        </button>
-                        <button
-                          className="floating-menu__item floating-menu__item--danger"
-                          onClick={() => {
-                            setBatchMenuOpen(false);
-                            void handleBatchStop();
-                          }}
-                          type="button"
-                        >
-                          {copy.batchStop}
-                        </button>
-                      </div>
-                    )}
+                    <button
+                      className="action-button action-button--danger action-button--compact"
+                      disabled={busyKey !== ''}
+                      onClick={() => void handleBatchStop()}
+                      type="button"
+                    >
+                      <AppIcon icon="stop" size={16} />
+                      <span>{copy.batchStop}</span>
+                    </button>
                   </div>
-                  <ActionButton
-                    compact
-                    disabled={busyKey !== ''}
-                    icon="start"
-                    kind="default"
-                    label={copy.quickStartIdeaProject}
-                    onClick={() => {
-                      void handleQuickImportProject();
-                    }}
-                  />
-                  <ActionButton compact icon="addService" kind="primary" label={copy.addService} onClick={() => setServiceForm(buildServiceForm())} />
+                  <ActionButton compact icon="addService" kind="primary" label={copy.addService} onClick={() => void handleScanImport()} />
                 </div>
               </div>
 
@@ -2877,7 +3198,7 @@ export function App() {
                           )}
                         </div>
 
-                        <div className="service-row__runtime">{formatDuration(runtime, now)}</div>
+                        <ServiceRuntimeDuration runtime={runtime} />
                         <div className="service-row__last">{formatLastStart(runtime.startedAt, language)}</div>
 
                         <div className="service-row__actions">
@@ -2935,7 +3256,7 @@ export function App() {
                                       className="floating-menu__item"
                                       onClick={() => {
                                         setRowMenuServiceId('');
-                                        setServiceForm(buildServiceForm(service));
+                                        setServiceForm(buildServiceForm(service, snapshot.groups));
                                       }}
                                       type="button"
                                     >
@@ -2975,12 +3296,10 @@ export function App() {
                       <ActionButton
                         compact
                         disabled={busyKey !== ''}
-                        icon="start"
+                        icon="addService"
                         kind="primary"
-                        label={copy.quickStartIdeaProject}
-                        onClick={() => {
-                          void handleQuickImportProject();
-                        }}
+                        label={copy.addService}
+                        onClick={() => void handleScanImport()}
                       />
                     </div>
                   )}
@@ -3071,13 +3390,6 @@ export function App() {
                             const nextValue = event.target.checked;
                             autoScrollPausedBySearchRef.current = false;
                             setAutoScroll(nextValue);
-                            if (nextValue) {
-                              requestAnimationFrame(() => {
-                                if (logStreamRef.current) {
-                                  logStreamRef.current.scrollTop = logStreamRef.current.scrollHeight;
-                                }
-                              });
-                            }
                           }}
                         />
                         <span>{copy.autoScroll}</span>
@@ -3091,30 +3403,15 @@ export function App() {
                 <div className="pilot-logs-card__body">
                   <div className="pilot-terminal">
                     {logSearchHintText && <div className="pilot-log-search-summary">{logSearchHintText}</div>}
-                    <div className="pilot-terminal__body" ref={logStreamRef}>
-                      {filteredLogEntries.map((entry) => (
-                        <LogTerminalRow
-                          activeSearchMatch={activeLogMatchEntryId === entry.id}
-                          entry={entry}
-                          key={entry.id}
-                          registerRow={registerLogRow}
-                          searchQuery={deferredLogQuery}
-                        />
-                      ))}
-                      {!filteredLogEntries.length && (
-                        <div className="pilot-terminal__empty">
-                          <div className="pilot-terminal__empty-icon">
-                            <AppIcon icon="log" size={26} />
-                          </div>
-                          <div className="pilot-terminal__empty-title">
-                            {hasLogQuery ? (language === 'zh-CN' ? '未找到匹配内容' : 'No matches') : copy.noLogs}
-                          </div>
-                          <div className="pilot-terminal__empty-desc">
-                            {hasLogQuery ? logQuery.trim() : copy.noLogsDesc}
-                          </div>
-                        </div>
-                      )}
-                    </div>
+                    <VirtualLogList
+                      items={filteredLogEntries}
+                      searchQuery={deferredLogQuery}
+                      activeSearchMatchId={activeLogMatchEntryId}
+                      autoScroll={autoScroll}
+                      onAutoScrollChange={setAutoScroll}
+                      emptyTitle={hasLogQuery ? (language === 'zh-CN' ? '未找到匹配内容' : 'No matches') : copy.noLogs}
+                      emptyDesc={hasLogQuery ? logQuery.trim() : copy.noLogsDesc}
+                    />
                   </div>
                 </div>
               </section>
@@ -3148,6 +3445,41 @@ export function App() {
                     label={language === 'zh-CN' ? '选择项目' : 'Choose Project'}
                     onClick={() => void handlePickDirectory()}
                   />
+                </div>
+              </div>
+
+              <div className="field field--full">
+                <span>{copy.group}</span>
+                <div className="service-groups-select">
+                  {snapshot.groups.length === 0 ? (
+                    <span className="service-groups-select__empty">
+                      {language === 'zh-CN' ? '暂无分组' : 'No groups available'}
+                    </span>
+                  ) : (
+                    snapshot.groups.map((group) => {
+                      const checked = serviceForm.groupIds.includes(group.id);
+                      return (
+                        <label className={`service-groups-select__item ${checked ? 'service-groups-select__item--checked' : ''}`} key={group.id}>
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(event) => {
+                              setServiceForm({
+                                ...serviceForm,
+                                groupIds: event.target.checked
+                                  ? [...serviceForm.groupIds, group.id]
+                                  : serviceForm.groupIds.filter((id) => id !== group.id)
+                              });
+                            }}
+                          />
+                          <span>{group.name}</span>
+                          <span className="service-groups-select__count">
+                            {group.serviceIds.length}
+                          </span>
+                        </label>
+                      );
+                    })
+                  )}
                 </div>
               </div>
 
@@ -3277,12 +3609,140 @@ export function App() {
                   const target = deleteServiceTarget;
                   void runAction(`delete-${target.id}`, async () => {
                     await window.servicePilot.deleteService(target.id);
+                    // 清理已删除服务的日志缓存，释放内存
+                    setLogsByService((current) => {
+                      if (!current[target.id]) {
+                        return current;
+                      }
+                      const next = { ...current };
+                      delete next[target.id];
+                      return next;
+                    });
                     setDeleteServiceTarget(null);
                     if (selectedLogServiceId === target.id) {
                       setSelectedLogServiceId('');
                     }
                   });
                 }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {scanModalOpen && (
+        <div className="modal-backdrop">
+          <div className="modal modal--scan">
+            <div className="modal__header">
+              <div>
+                <h3>{copy.scanImport}</h3>
+                {scanLoading ? (
+                  <p>{copy.scanningServices}</p>
+                ) : scanResults.length > 0 ? (
+                  <p>{copy.detectedServices(scanResults.length)}</p>
+                ) : (
+                  <p>{copy.noServicesDetected}</p>
+                )}
+              </div>
+              <button className="modal__close" onClick={() => { setScanModalOpen(false); setScanResults([]); setScanSelected(new Set()); setScanGroupIds([]); }} type="button">
+                <AppIcon icon="close" size={16} />
+              </button>
+            </div>
+
+            <div className="modal__body modal__body--scan">
+              {scanLoading ? (
+                <div className="pilot-loading">
+                  <div className="pilot-loading__spinner" />
+                </div>
+              ) : scanResults.length > 0 ? (
+                <>
+                  <div className="scan-toolbar">
+                    <button
+                      className="action-button action-button--default action-button--compact"
+                      onClick={handleToggleSelectAll}
+                      type="button"
+                    >
+                      {copy.selectAll} ({scanSelected.size}/{scanResults.length})
+                    </button>
+                  </div>
+                  {snapshot.groups.length > 0 && (
+                    <div className="scan-group-select">
+                      <span className="scan-group-select__label">{copy.group}</span>
+                      {snapshot.groups.map((group) => {
+                        const checked = scanGroupIds.includes(group.id);
+                        return (
+                          <label className={`scan-group-select__item ${checked ? 'scan-group-select__item--checked' : ''}`} key={group.id}>
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={(event) => {
+                                setScanGroupIds(
+                                  event.target.checked
+                                    ? [...scanGroupIds, group.id]
+                                    : scanGroupIds.filter((id) => id !== group.id)
+                                );
+                              }}
+                            />
+                            <span>{group.name || '—'}</span>
+                            <span className="scan-group-select__count">{group.serviceIds.length}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  )}
+                  <div className="scan-list">
+                    {scanResults.map((service) => (
+                      <label className={`scan-row ${scanSelected.has(service.workingDir) ? 'scan-row--checked' : ''}`} key={service.workingDir}>
+                        <input
+                          type="checkbox"
+                          checked={scanSelected.has(service.workingDir)}
+                          onChange={() => handleToggleScanSelect(service.workingDir)}
+                        />
+                        <span className="scan-row__name">{service.name}</span>
+                        {service.port && <span className="scan-row__port">:{service.port}</span>}
+                        <span className="scan-row__dir" title={service.workingDir}>{service.workingDir}</span>
+                      </label>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <div className="pilot-empty-state pilot-empty-state--compact">
+                  <div>{copy.noServicesDetected}</div>
+                </div>
+              )}
+            </div>
+
+            <div className="modal__footer">
+              <ActionButton compact icon="close" kind="default" label={copy.cancel} onClick={() => { setScanModalOpen(false); setScanResults([]); setScanSelected(new Set()); setScanGroupIds([]); }} />
+              {scanResults.length > 0 && (
+                <ActionButton
+                  compact
+                  disabled={busyKey !== '' || scanSelected.size === 0}
+                  icon="addService"
+                  kind="primary"
+                  label={`${copy.importSelected} (${scanSelected.size})`}
+                  onClick={() => void handleBatchImportSelected()}
+                />
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {exitConfirmOpen && (
+        <div className="modal-backdrop">
+          <div className="modal modal--exit">
+            <div className="modal__header">
+              <p>{copy.quitConfirm}</p>
+            </div>
+            <div className="modal__footer">
+              <ActionButton compact icon="close" kind="default" label={copy.cancel} onClick={() => setExitConfirmOpen(false)} />
+              <ActionButton
+                compact
+                icon="stop"
+                kind="danger"
+                label={language === 'zh-CN' ? '退出' : 'Exit'}
+                onClick={() => void window.servicePilot.exitApp()}
               />
             </div>
           </div>
