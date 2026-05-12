@@ -1501,35 +1501,187 @@ function renderLogSearchHighlight(text: string, query: string, active: boolean) 
   return segments;
 }
 
-const LogTerminalRow = memo(function LogTerminalRow({
-  entry,
+const ITEM_HEIGHT_ESTIMATE = 22;
+const OVERSCAN = 10;
+
+const VirtualLogList = memo(function VirtualLogList({
+  items,
   searchQuery,
-  activeSearchMatch,
-  registerRow
+  activeSearchMatchId,
+  autoScroll,
+  onAutoScrollChange,
+  emptyTitle,
+  emptyDesc
 }: {
-  entry: LogEntry;
+  items: LogEntry[];
   searchQuery: string;
-  activeSearchMatch: boolean;
-  registerRow: (id: string, node: HTMLDivElement | null) => void;
+  activeSearchMatchId: string | undefined;
+  autoScroll: boolean;
+  onAutoScrollChange: (value: boolean) => void;
+  emptyTitle: string;
+  emptyDesc: string;
 }) {
-  const level = getLogLevel(entry);
-  const highlight = isRootCauseLog(entry);
-  const message = getLogMessage(entry);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [containerHeight, setContainerHeight] = useState(0);
+  const [measuredHeights, setMeasuredHeights] = useState<Record<string, number>>({});
+  const userScrolledRef = useRef(false);
+  const rowRefs = useRef<Record<string, HTMLDivElement | null>>({});
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setContainerHeight(entry.contentRect.height);
+      }
+    });
+    observer.observe(el);
+    setContainerHeight(el.clientHeight);
+    return () => observer.disconnect();
+  }, []);
+
+  // 测量已渲染行的实际高度
+  const measureRow = useCallback((id: string, node: HTMLDivElement | null) => {
+    if (!node) return;
+    rowRefs.current[id] = node;
+    const h = node.offsetHeight;
+    if (h > 0) {
+      setMeasuredHeights((prev) => (prev[id] === h ? prev : { ...prev, [id]: h }));
+    }
+  }, []);
+
+  // 自动滚动到底部
+  useEffect(() => {
+    if (!autoScroll || !containerRef.current) return;
+    const el = containerRef.current;
+    el.scrollTop = el.scrollHeight;
+    const frame = requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
+    return () => cancelAnimationFrame(frame);
+  }, [autoScroll, items.length]);
+
+  // 容器大小变化时，如果在底部则保持底部
+  useEffect(() => {
+    if (!autoScroll || !containerRef.current) return;
+    containerRef.current.scrollTop = containerRef.current.scrollHeight;
+  }, [containerHeight, autoScroll]);
+
+  // 搜索跳转
+  useEffect(() => {
+    if (!activeSearchMatchId || !containerRef.current) return;
+    const idx = items.findIndex((e) => e.id === activeSearchMatchId);
+    if (idx < 0) return;
+    let top = 0;
+    for (let i = 0; i < idx; i++) top += measuredHeights[items[i].id] || ITEM_HEIGHT_ESTIMATE;
+    const rowH = measuredHeights[activeSearchMatchId] || ITEM_HEIGHT_ESTIMATE;
+    const el = containerRef.current;
+    const targetTop = top - el.clientHeight / 2 + rowH / 2;
+    el.scrollTop = Math.max(0, targetTop);
+  }, [activeSearchMatchId, items, measuredHeights]);
+
+  const handleScroll = useCallback(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    setScrollTop(el.scrollTop);
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 30;
+    if (!atBottom) {
+      userScrolledRef.current = true;
+      if (autoScroll) onAutoScrollChange(false);
+    } else {
+      userScrolledRef.current = false;
+      if (!autoScroll) onAutoScrollChange(true);
+    }
+  }, [autoScroll, onAutoScrollChange]);
+
+  // 计算总高度和可见范围
+  const { totalHeight, startIndex, endIndex, offsetY } = useMemo(() => {
+    let total = 0;
+    for (let i = 0; i < items.length; i++) {
+      total += measuredHeights[items[i].id] || ITEM_HEIGHT_ESTIMATE;
+    }
+
+    let acc = 0;
+    let start = 0;
+    for (let i = 0; i < items.length; i++) {
+      const h = measuredHeights[items[i].id] || ITEM_HEIGHT_ESTIMATE;
+      if (acc + h >= scrollTop) { start = i; break; }
+      acc += h;
+      if (i === items.length - 1) start = i;
+    }
+
+    const visibleStart = Math.max(0, start - OVERSCAN);
+    let visibleEnd = start;
+    let consumed = acc;
+    for (let i = start; i < items.length; i++) {
+      consumed += measuredHeights[items[i].id] || ITEM_HEIGHT_ESTIMATE;
+      visibleEnd = i;
+      if (consumed >= scrollTop + containerHeight) break;
+    }
+    visibleEnd = Math.min(items.length - 1, visibleEnd + OVERSCAN);
+
+    let topPad = 0;
+    for (let i = 0; i < visibleStart; i++) {
+      topPad += measuredHeights[items[i].id] || ITEM_HEIGHT_ESTIMATE;
+    }
+
+    return { totalHeight: total, startIndex: visibleStart, endIndex: visibleEnd, offsetY: topPad };
+  }, [items, scrollTop, containerHeight, measuredHeights]);
+
+  const visibleItems = items.slice(startIndex, endIndex + 1);
 
   return (
     <div
-      className={`pilot-terminal__row ${highlight ? 'pilot-terminal__row--highlight' : ''} ${
-        activeSearchMatch ? 'pilot-terminal__row--search-current' : ''
-      }`}
-      ref={(node) => registerRow(entry.id, node)}
+      ref={containerRef}
+      className="pilot-terminal__body"
+      onScroll={handleScroll}
+      style={{ overflow: 'auto' }}
     >
-      <span className="pilot-terminal__time">{formatLogTime(entry.timestamp)}</span>
-      <span className={`pilot-terminal__level pilot-terminal__level--${level.toLowerCase()}`}>{level}</span>
-      <span className={`pilot-terminal__text ${highlight ? 'pilot-terminal__text--highlight' : ''}`}>
-        {renderLogSearchHighlight(message, searchQuery, activeSearchMatch)}
-      </span>
+      <div style={{ height: totalHeight, position: 'relative' }}>
+        <div style={{ transform: `translateY(${offsetY}px)` }}>
+          {visibleItems.map((entry) => {
+            const level = getLogLevel(entry);
+            const highlight = isRootCauseLog(entry);
+            const message = getLogMessage(entry);
+            return (
+              <div
+                key={entry.id}
+                ref={(node) => measureRow(entry.id, node)}
+                className={`pilot-terminal__row ${highlight ? 'pilot-terminal__row--highlight' : ''} ${
+                  activeSearchMatchId === entry.id ? 'pilot-terminal__row--search-current' : ''
+                }`}
+              >
+                <span className="pilot-terminal__time">{formatLogTime(entry.timestamp)}</span>
+                <span className={`pilot-terminal__level pilot-terminal__level--${level.toLowerCase()}`}>{level}</span>
+                <span className={`pilot-terminal__text ${highlight ? 'pilot-terminal__text--highlight' : ''}`}>
+                  {renderLogSearchHighlight(message, searchQuery, activeSearchMatchId === entry.id)}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      {!items.length && (
+        <div className="pilot-terminal__empty">
+          <div className="pilot-terminal__empty-icon">
+            <AppIcon icon="log" size={26} />
+          </div>
+          <div className="pilot-terminal__empty-title">{emptyTitle}</div>
+          <div className="pilot-terminal__empty-desc">{emptyDesc}</div>
+        </div>
+      )}
     </div>
   );
+});
+
+const ServiceRuntimeDuration = memo(function ServiceRuntimeDuration({ runtime }: { runtime: RuntimeState | undefined }) {
+  const [now, setNow] = useState(Date.now());
+  const isActive = runtime && (runtime.status === 'running' || runtime.status === 'starting' || runtime.status === 'stopping') && runtime.startedAt;
+  useEffect(() => {
+    if (!isActive) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [isActive]);
+  return <div className="service-row__runtime">{formatDuration(runtime, now)}</div>;
 });
 
 export function App() {
@@ -1560,7 +1712,6 @@ export function App() {
   );
   const [feedback, setFeedback] = useState<FeedbackState>(null);
   const [busyKey, setBusyKey] = useState('');
-  const [now, setNow] = useState(Date.now());
   const [appVersion, setAppVersion] = useState('1.0.0');
   const [updateInfo, setUpdateInfo] = useState<AppUpdateInfo | null>(null);
   const [scanModalOpen, setScanModalOpen] = useState(false);
@@ -1599,18 +1750,9 @@ export function App() {
   );
   const deferredServiceSearch = useDeferredValue(serviceSearch.trim().toLowerCase());
   const deferredLogQuery = useDeferredValue(logQuery.trim().toLowerCase());
-  const logStreamRef = useRef<HTMLDivElement | null>(null);
   const autoScrollPausedBySearchRef = useRef(false);
   const selectedLogServiceIdRef = useRef(selectedLogServiceId);
   selectedLogServiceIdRef.current = selectedLogServiceId;
-  const logRowRefs = useRef<Record<string, HTMLDivElement | null>>({});
-  const registerLogRow = useCallback((id: string, node: HTMLDivElement | null) => {
-    if (node) {
-      logRowRefs.current[id] = node;
-      return;
-    }
-    delete logRowRefs.current[id];
-  }, []);
 
   const handleCloseAttempt = useCallback(() => {
     const current = snapshotRef.current;
@@ -1625,30 +1767,6 @@ export function App() {
     }
   }, []);
 
-  // 只有存在运行中/启动中/停止中的服务时才轮询时钟，避免空闲期每秒强制重渲染
-  const hasActiveServices = useMemo(
-    () => snapshot.services.some((s) => {
-      const status = snapshot.runtime[s.id]?.status ?? 'stopped';
-      return status === 'running' || status === 'starting' || status === 'stopping';
-    }),
-    [snapshot]
-  );
-
-  useEffect(() => {
-    if (!hasActiveServices) {
-      // 无活跃服务时，手动刷新一次时间后停止
-      setNow(Date.now());
-      return;
-    }
-
-    const timer = window.setInterval(() => {
-      setNow(Date.now());
-    }, 1000);
-
-    return () => {
-      window.clearInterval(timer);
-    };
-  }, [hasActiveServices]);
 
   useEffect(() => {
     let disposed = false;
@@ -1794,6 +1912,16 @@ export function App() {
     }
   }, [selectedLogServiceId, snapshot.services]);
 
+  // 切换日志服务时清理非当前服务的日志缓存，释放内存
+  useEffect(() => {
+    setLogsByService((current) => {
+      const keys = Object.keys(current);
+      if (!selectedLogServiceId || keys.length <= 1) return current;
+      const kept = current[selectedLogServiceId];
+      return kept ? { [selectedLogServiceId]: kept } : {};
+    });
+  }, [selectedLogServiceId]);
+
   useEffect(() => {
     if (selectedGroup === 'all') {
       return;
@@ -1861,8 +1989,6 @@ export function App() {
   const hasLogQuery = Boolean(deferredLogQuery);
   const logMatchCount = hasLogQuery ? filteredLogEntries.length : 0;
   const activeLogMatchEntryId = hasLogQuery ? filteredLogEntries[logMatchIndex]?.id : undefined;
-  const lastFilteredLogEntry = filteredLogEntries[filteredLogEntries.length - 1];
-  const logScrollSignal = lastFilteredLogEntry ? `${lastFilteredLogEntry.id}:${lastFilteredLogEntry.text.length}` : '';
   const logSearchStatusText = hasLogQuery
     ? logMatchCount
       ? `${Math.min(logMatchIndex + 1, logMatchCount)} / ${logMatchCount}`
@@ -1917,38 +2043,6 @@ export function App() {
     }
     setLogMatchIndex(Math.max(0, logMatchCount - 1));
   }, [logMatchCount, logMatchIndex]);
-
-  useLayoutEffect(() => {
-    if (!autoScroll || !logStreamRef.current) {
-      return;
-    }
-    const scrollToBottom = () => {
-      if (logStreamRef.current) {
-        logStreamRef.current.scrollTop = logStreamRef.current.scrollHeight;
-      }
-    };
-    scrollToBottom();
-    const frame = window.requestAnimationFrame(scrollToBottom);
-    const timer = window.setTimeout(scrollToBottom, 0);
-
-    return () => {
-      window.cancelAnimationFrame(frame);
-      window.clearTimeout(timer);
-    };
-  }, [activeNav, autoScroll, logScrollSignal, selectedLogServiceId]);
-
-  useLayoutEffect(() => {
-    if (!activeLogMatchEntryId || !logStreamRef.current) {
-      return;
-    }
-
-    const row = logRowRefs.current[activeLogMatchEntryId];
-    if (!row) {
-      return;
-    }
-
-    row.scrollIntoView({ block: 'center', behavior: 'auto' });
-  }, [activeLogMatchEntryId, activeNav]);
 
   useEffect(() => {
     if (!feedback) {
@@ -3110,7 +3204,7 @@ export function App() {
                           )}
                         </div>
 
-                        <div className="service-row__runtime">{formatDuration(runtime, now)}</div>
+                        <ServiceRuntimeDuration runtime={runtime} />
                         <div className="service-row__last">{formatLastStart(runtime.startedAt, language)}</div>
 
                         <div className="service-row__actions">
@@ -3302,13 +3396,6 @@ export function App() {
                             const nextValue = event.target.checked;
                             autoScrollPausedBySearchRef.current = false;
                             setAutoScroll(nextValue);
-                            if (nextValue) {
-                              requestAnimationFrame(() => {
-                                if (logStreamRef.current) {
-                                  logStreamRef.current.scrollTop = logStreamRef.current.scrollHeight;
-                                }
-                              });
-                            }
                           }}
                         />
                         <span>{copy.autoScroll}</span>
@@ -3322,30 +3409,15 @@ export function App() {
                 <div className="pilot-logs-card__body">
                   <div className="pilot-terminal">
                     {logSearchHintText && <div className="pilot-log-search-summary">{logSearchHintText}</div>}
-                    <div className="pilot-terminal__body" ref={logStreamRef}>
-                      {filteredLogEntries.map((entry) => (
-                        <LogTerminalRow
-                          activeSearchMatch={activeLogMatchEntryId === entry.id}
-                          entry={entry}
-                          key={entry.id}
-                          registerRow={registerLogRow}
-                          searchQuery={deferredLogQuery}
-                        />
-                      ))}
-                      {!filteredLogEntries.length && (
-                        <div className="pilot-terminal__empty">
-                          <div className="pilot-terminal__empty-icon">
-                            <AppIcon icon="log" size={26} />
-                          </div>
-                          <div className="pilot-terminal__empty-title">
-                            {hasLogQuery ? (language === 'zh-CN' ? '未找到匹配内容' : 'No matches') : copy.noLogs}
-                          </div>
-                          <div className="pilot-terminal__empty-desc">
-                            {hasLogQuery ? logQuery.trim() : copy.noLogsDesc}
-                          </div>
-                        </div>
-                      )}
-                    </div>
+                    <VirtualLogList
+                      items={filteredLogEntries}
+                      searchQuery={deferredLogQuery}
+                      activeSearchMatchId={activeLogMatchEntryId}
+                      autoScroll={autoScroll}
+                      onAutoScrollChange={setAutoScroll}
+                      emptyTitle={hasLogQuery ? (language === 'zh-CN' ? '未找到匹配内容' : 'No matches') : copy.noLogs}
+                      emptyDesc={hasLogQuery ? logQuery.trim() : copy.noLogsDesc}
+                    />
                   </div>
                 </div>
               </section>
@@ -3552,13 +3624,6 @@ export function App() {
                       delete next[target.id];
                       return next;
                     });
-                    // 清理已删除服务的 DOM 引用
-                    const refs = logRowRefs.current;
-                    for (const key of Object.keys(refs)) {
-                      if (key.startsWith(`${target.id}:`)) {
-                        delete refs[key];
-                      }
-                    }
                     setDeleteServiceTarget(null);
                     if (selectedLogServiceId === target.id) {
                       setSelectedLogServiceId('');

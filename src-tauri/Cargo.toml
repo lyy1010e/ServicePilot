@@ -1,6 +1,6 @@
 [package]
 name = "service-pilot"
-version = "1.0.2"
+version = "1.0.3"
 description = "Desktop manager for local Spring Boot and Vue development services."
 authors = ["OpenAI"]
 edition = "2021"

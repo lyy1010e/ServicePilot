@@ -29,6 +29,7 @@ use tokio::{
 
 const DATA_FILE: &str = "service-pilot-state.json";
 const MAX_LOG_ENTRIES: usize = 2000;
+const MAX_MERGE_TEXT_LENGTH: usize = 100 * 1024; // 100 KB
 const TRAY_SHOW_ID: &str = "tray-show";
 const TRAY_QUIT_ID: &str = "tray-quit";
 
@@ -57,6 +58,7 @@ struct ServicePilotBackend {
   app: AppHandle<Wry>,
   state_file: PathBuf,
   inner: Arc<Mutex<BackendState>>,
+  last_snapshot_emitted: Arc<Mutex<std::time::Instant>>,
 }
 
 struct BackendState {
@@ -353,6 +355,7 @@ impl ServicePilotBackend {
     Ok(Self {
       app,
       state_file,
+      last_snapshot_emitted: Arc::new(Mutex::new(std::time::Instant::now())),
       inner: Arc::new(Mutex::new(BackendState {
         services: Vec::new(),
         groups: Vec::new(),
@@ -1633,6 +1636,11 @@ impl ServicePilotBackend {
       self.stop_service(&service_id).await.ok();
     }
     sleep(Duration::from_millis(250)).await;
+    // 清理 launch-cache
+    if let Ok(cache_dir) = self.app.path().app_cache_dir() {
+      let launch_cache = cache_dir.join("launch-cache");
+      let _ = fs::remove_dir_all(&launch_cache).await;
+    }
     Ok(())
   }
 
@@ -1884,6 +1892,12 @@ impl ServicePilotBackend {
   }
 
   async fn emit_snapshot(&self) {
+    let now = std::time::Instant::now();
+    let last = *self.last_snapshot_emitted.lock().await;
+    if now.duration_since(last).as_millis() < 50 {
+      return;
+    }
+    *self.last_snapshot_emitted.lock().await = now;
     let snapshot = self.get_snapshot().await;
     let _ = self.app.emit("snapshot:update", snapshot);
   }
@@ -1921,6 +1935,10 @@ impl ServicePilotBackend {
           if should_merge_log_line(previous, &entry) {
             previous.text.push('\n');
             previous.text.push_str(&entry.text);
+            if previous.text.len() > MAX_MERGE_TEXT_LENGTH {
+              let excess = previous.text.len() - MAX_MERGE_TEXT_LENGTH;
+              previous.text.drain(..excess);
+            }
             let merged = previous.clone();
             drop(inner);
             let _ = self.app.emit("log:entry", merged);
