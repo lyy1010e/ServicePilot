@@ -34,7 +34,7 @@ await updateJson(path.join(root, 'src-tauri', 'tauri.conf.json'), (json) => {
 console.log('==> 提交并推送');
 await run('git', ['add', 'package.json', 'src-tauri/Cargo.toml', 'src-tauri/tauri.conf.json']);
 await run('git', ['commit', '-m', `release: v${version}`]);
-await run('git', ['push', 'origin', 'dev']);
+await run('git', ['push', 'origin', 'master']);
 
 console.log('==> 打 tag 触发自动发布');
 await run('git', ['tag', `v${version}`]);
