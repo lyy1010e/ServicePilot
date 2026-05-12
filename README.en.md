@@ -22,7 +22,10 @@ ServicePilot has a strict local-development boundary: launch, stop, import, and 
 - Manage local `Spring Boot` and `Vue/Rust` frontend dev services in one desktop app.
 - Support `maven`, `java-main`, `vue-preset`, and guarded `custom` launch types.
 - Start, stop, and restart single services, plus batch start/stop by group.
-- Organize related services into groups for domain-based or debugging-session workflows.
+- Organize related services into groups for domain-based or debugging-session workflows, with drag-to-reorder support.
+- Scan a directory to auto-discover Spring Boot sub-projects and batch import them.
+- Configure JVM arguments (`-Xms`, `-Xmx`, etc.) and Spring Profiles (e.g. `dev, local`).
+- Maven advanced options: force dependency refresh (`-U`), debug mode (`-e -X`), disable fork (`-Dspring-boot.run.fork=false`).
 - Stream real-time logs, keep recent logs per service, search logs, jump between matches, and filter by log level.
 - Optionally clear a service's old logs before starting or restarting it.
 - Read IDEA/Maven project settings and provide a quick "select project and start" flow.
@@ -54,7 +57,7 @@ Launch, stop, import, and restart flows should not run:
 ## How To Use
 
 1. Start the app and click "Select Project & Start". Pick a local IDEA/Maven or frontend project directory, and ServicePilot will try to detect the project type and create a service.
-2. Or click "Add Service" to manually configure the service name, working directory, launch type, arguments, port, environment variables, and related fields.
+2. Or click "Scan & Import" to auto-discover Spring Boot sub-projects in a directory and batch import them. You can also click "Add Service" to manually configure the service name, working directory, launch type, arguments, port, JVM arguments, Profiles, environment variables, and related fields.
 3. Use the home service list to start, stop, or restart services, and monitor status, port, runtime, and last start time.
 4. Select a service in the log panel to view real-time output, search logs, filter levels, or clear the current service log manually.
 5. Use "Group Workspace" to create groups and batch start or stop related services.
