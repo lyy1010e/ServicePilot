@@ -33,6 +33,9 @@ const MAX_MERGE_TEXT_LENGTH: usize = 100 * 1024; // 100 KB
 const TRAY_SHOW_ID: &str = "tray-show";
 const TRAY_QUIT_ID: &str = "tray-quit";
 
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
 type BackendResult<T> = Result<T, String>;
 
 #[derive(Debug, Clone, Serialize)]
@@ -983,10 +986,14 @@ impl ServicePilotBackend {
     };
     let (process_command, process_args) = prepare_spawn_command(&launch);
 
-    let output = Command::new(&process_command)
+    let mut classpath_cmd = Command::new(&process_command);
+    classpath_cmd
       .args(&process_args)
       .current_dir(working_dir)
-      .envs(env)
+      .envs(env);
+    #[cfg(windows)]
+    classpath_cmd.creation_flags(CREATE_NO_WINDOW);
+    let output = classpath_cmd
       .output()
       .await
       .map_err(|error| format!("Failed to prepare Java Main classpath: {error}"))?;
@@ -1092,9 +1099,13 @@ impl ServicePilotBackend {
       command_line: String::new(),
     };
     let (process_command, process_args) = prepare_spawn_command(&launch);
-    let output = Command::new(&process_command)
+    let mut jar_cmd = Command::new(&process_command);
+    jar_cmd
       .args(&process_args)
-      .envs(env)
+      .envs(env);
+    #[cfg(windows)]
+    jar_cmd.creation_flags(CREATE_NO_WINDOW);
+    let output = jar_cmd
       .output()
       .await
       .map_err(|error| format!("Failed to build classpath manifest jar: {error}"))?;
@@ -1353,6 +1364,8 @@ impl ServicePilotBackend {
       .stderr(std::process::Stdio::piped())
       .stdin(std::process::Stdio::null())
       .kill_on_drop(false);
+    #[cfg(windows)]
+    command.creation_flags(CREATE_NO_WINDOW);
 
     let mut child = match command.spawn() {
       Ok(child) => child,
@@ -3414,12 +3427,13 @@ async fn kill_process_tree(pid: u32) {
 
   #[cfg(target_os = "windows")]
   {
-    if let Ok(mut child) = Command::new("taskkill")
+    let mut cmd = Command::new("taskkill");
+    cmd
       .args(["/pid", &pid.to_string(), "/T", "/F"])
       .stdout(std::process::Stdio::null())
       .stderr(std::process::Stdio::null())
-      .spawn()
-    {
+      .creation_flags(CREATE_NO_WINDOW);
+    if let Ok(mut child) = cmd.spawn() {
       let _ = child.wait().await;
     }
   }
