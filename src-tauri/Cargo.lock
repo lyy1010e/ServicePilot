@@ -3543,7 +3543,7 @@ dependencies = [
 
 [[package]]
 name = "service-pilot"
-version = "1.0.3"
+version = "1.0.6"
 dependencies = [
  "chrono",
  "serde",

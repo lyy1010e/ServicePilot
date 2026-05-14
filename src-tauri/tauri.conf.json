@@ -1,7 +1,7 @@
 {
   "$schema": "./gen/schemas/desktop-schema.json",
   "productName": "ServicePilot",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "identifier": "com.servicepilot.desktop",
   "build": {
     "beforeDevCommand": "npm run dev:renderer",
