@@ -2033,6 +2033,9 @@ export function App() {
     if (!feedback) {
       return;
     }
+    if (feedback.tone === 'info' && busyKey === 'install-update') {
+      return;
+    }
 
     const timer = window.setTimeout(() => {
       setFeedback(null);
@@ -2041,7 +2044,7 @@ export function App() {
     return () => {
       window.clearTimeout(timer);
     };
-  }, [feedback]);
+  }, [busyKey, feedback]);
 
   const runtimeSummary = useMemo(() => buildRuntimeSummary(snapshot), [snapshot]);
 
@@ -2305,7 +2308,7 @@ export function App() {
     await runAction('install-update', async () => {
       setFeedback({
         message: copy.updateInstalling,
-        tone: 'success'
+        tone: 'info'
       });
       await window.servicePilot.installUpdate();
     });
@@ -2617,7 +2620,12 @@ export function App() {
           </div>
           <div className="pilot-brand__copy">
             <h1>{copy.appName}</h1>
-            <div className="pilot-brand__version-row" data-no-window-drag>
+            <div
+              className="pilot-brand__version-row"
+              data-no-window-drag
+              onDoubleClick={blockWindowControlDrag}
+              onMouseDown={blockWindowControlDrag}
+            >
               <span className="pilot-brand__version">v{appVersion}</span>
               {updateInfo && (
                 <button
@@ -2625,6 +2633,8 @@ export function App() {
                   className="pilot-brand__update-button pilot-brand__update-button--available"
                   disabled={busyKey === 'install-update'}
                   onClick={() => void handleInstallUpdate()}
+                  onDoubleClick={blockWindowControlDrag}
+                  onMouseDown={blockWindowControlDrag}
                   title={copy.updateAvailable(updateInfo.version)}
                   type="button"
                 >

@@ -1,6 +1,6 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppSnapshot, LogEntry, ServiceConfig, ServicePilotApi } from '@shared/models';
 import { App } from './App';
 
@@ -99,6 +99,10 @@ describe('App service flows', () => {
     vi.restoreAllMocks();
   });
 
+  afterEach(() => {
+    cleanup();
+  });
+
   it('saves a new Spring service from the service modal', { timeout: 30000 }, async () => {
     const { api, user } = await renderApp(snapshot());
     vi.mocked(api.pickDirectory).mockResolvedValue('D:\\workspace\\gateway');
@@ -174,5 +178,27 @@ describe('App service flows', () => {
     await user.click(within(row!).getByRole('button', { name: 'Start' }));
 
     await waitFor(() => expect(api.startService).toHaveBeenCalledWith('svc-1'));
+  });
+
+  it('opens the update confirmation from the header update button', async () => {
+    const { api, user } = await renderApp(snapshot());
+    vi.mocked(api.checkUpdate).mockResolvedValue({
+      version: '1.0.6',
+      currentVersion: '1.0.5',
+      notes: null,
+      date: null
+    });
+
+    await waitFor(() => expect(api.checkUpdate).toHaveBeenCalled(), { timeout: 5000 });
+
+    await user.click(screen.getByRole('button', { name: 'Update Now' }));
+
+    expect(screen.getByText(/Update directly to ServicePilot 1\.0\.6/)).toBeInTheDocument();
+    expect(api.startWindowDrag).not.toHaveBeenCalled();
+
+    const updateButtons = screen.getAllByRole('button', { name: 'Update Now' });
+    await user.click(updateButtons[updateButtons.length - 1]);
+
+    await waitFor(() => expect(api.installUpdate).toHaveBeenCalledTimes(1));
   });
 });

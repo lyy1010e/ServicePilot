@@ -2911,9 +2911,18 @@ async fn install_update(
       .pending
       .lock()
       .map_err(|_| "Failed to lock update state.".to_string())?;
-    pending
-      .take()
-      .ok_or_else(|| "No verified update is pending. Check for updates first.".to_string())?
+    pending.take()
+  };
+  let update = if let Some(update) = update {
+    update
+  } else {
+    app
+      .updater()
+      .map_err(|error| error.to_string())?
+      .check()
+      .await
+      .map_err(|error| error.to_string())?
+      .ok_or_else(|| "No verified update is available.".to_string())?
   };
 
   // 停止服务失败不应阻止更新
