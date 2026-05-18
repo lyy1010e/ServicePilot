@@ -1,7 +1,7 @@
 {
   "$schema": "./gen/schemas/desktop-schema.json",
   "productName": "ServicePilot",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "identifier": "com.servicepilot.desktop",
   "build": {
     "beforeDevCommand": "npm run dev:renderer",
@@ -15,10 +15,10 @@
       {
         "label": "main",
         "title": "ServicePilot",
-        "width": 1440,
-        "height": 960,
-        "minWidth": 1160,
-        "minHeight": 720,
+        "width": 1320,
+        "height": 860,
+        "minWidth": 1024,
+        "minHeight": 680,
         "resizable": true,
         "decorations": false,
         "center": true,

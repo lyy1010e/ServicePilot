@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 180" role="img" aria-label="Nuxt">
+  <path fill="#00DC82" d="M139 17c-5-9-18-9-23 0L4 162c-5 8 1 18 11 18h86c5 0 9-2 12-6l26-42 25 42c2 4 7 6 12 6h65c10 0 16-10 11-18Z"/>
+  <path fill="#108775" d="M139 132 103 73 49 161h64Z"/>
+  <path fill="#2F495E" d="M139 132 103 73l25-41 82 129h-64Z"/>
+</svg>

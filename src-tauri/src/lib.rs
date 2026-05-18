@@ -83,6 +83,7 @@ struct ManagedProcess {
 enum ServiceKind {
   Spring,
   Vue,
+  Rust,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -95,6 +96,8 @@ enum LaunchType {
   JavaMain,
   #[serde(rename = "vue-preset")]
   VuePreset,
+  #[serde(rename = "cargo-run")]
+  CargoRun,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -141,6 +144,8 @@ struct ServiceConfig {
   id: String,
   name: String,
   service_kind: ServiceKind,
+  #[serde(default)]
+  framework: Option<String>,
   launch_type: LaunchType,
   working_dir: String,
   command: String,
@@ -238,6 +243,7 @@ struct AppSnapshot {
 struct ProjectDetection {
   name: String,
   service_kind: ServiceKind,
+  framework: Option<String>,
   launch_type: LaunchType,
   command: String,
   frontend_script: Option<String>,
@@ -249,6 +255,7 @@ struct SaveServiceInput {
   id: Option<String>,
   name: String,
   service_kind: ServiceKind,
+  framework: Option<String>,
   launch_type: LaunchType,
   working_dir: String,
   #[serde(default)]
@@ -276,6 +283,22 @@ struct PackageJson {
   name: Option<String>,
   #[serde(default)]
   scripts: HashMap<String, serde_json::Value>,
+  #[serde(default)]
+  dependencies: HashMap<String, serde_json::Value>,
+  #[serde(default, rename = "devDependencies")]
+  dev_dependencies: HashMap<String, serde_json::Value>,
+  #[serde(default, rename = "peerDependencies")]
+  peer_dependencies: HashMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CargoManifest {
+  package: Option<CargoPackage>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CargoPackage {
+  name: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -323,7 +346,6 @@ struct IdeaSpringRunConfig {
 struct PreparedIdeaProject {
   service: ServiceConfig,
   imported_settings: AppSettings,
-  prepared_settings: AppSettings,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -331,6 +353,7 @@ struct PreparedIdeaProject {
 struct ScannedService {
   name: String,
   working_dir: String,
+  framework: Option<String>,
   port: Option<u16>,
 }
 
@@ -616,6 +639,7 @@ impl ServicePilotBackend {
       id: existing_service_id.unwrap_or_else(new_id),
       name: selected_config.name.clone(),
       service_kind: ServiceKind::Spring,
+      framework: Some("spring-boot".to_string()),
       launch_type: LaunchType::JavaMain,
       working_dir,
       command: java_command,
@@ -638,7 +662,6 @@ impl ServicePilotBackend {
     Ok(PreparedIdeaProject {
       service,
       imported_settings,
-      prepared_settings,
     })
   }
 
@@ -694,9 +717,14 @@ impl ServicePilotBackend {
 
   async fn import_project(&self, project_dir: &str) -> BackendResult<ServiceConfig> {
     let has_package_json = Path::new(project_dir).join("package.json").exists();
+    let has_cargo_toml = Path::new(project_dir).join("Cargo.toml").exists();
 
     if let Some(service) = self.import_frontend_project(project_dir).await? {
       return Ok(service);
+    }
+
+    if has_cargo_toml {
+      return self.import_rust_project(project_dir).await;
     }
 
     match self.import_idea_project(project_dir).await {
@@ -706,6 +734,84 @@ impl ServicePilotBackend {
       )),
       Err(error) => Err(error),
     }
+  }
+
+  async fn import_rust_project(&self, project_dir: &str) -> BackendResult<ServiceConfig> {
+    let project_root = PathBuf::from(project_dir);
+    let cargo_file = project_root.join("Cargo.toml");
+    let content = fs::read_to_string(&cargo_file).await.map_err(|error| {
+      format!(
+        "Failed to read Cargo.toml {}: {error}",
+        cargo_file.display()
+      )
+    })?;
+    let manifest: CargoManifest = toml::from_str(&content).map_err(|error| {
+      format!(
+        "Failed to parse Cargo.toml {}: {error}",
+        cargo_file.display()
+      )
+    })?;
+
+    let fallback_name = project_root
+      .file_name()
+      .and_then(|value| value.to_str())
+      .map(|value| value.to_string())
+      .filter(|value| !value.is_empty())
+      .unwrap_or_else(|| "rust-service".to_string());
+
+    let name = manifest
+      .package
+      .and_then(|pkg| pkg.name)
+      .map(|value| value.trim().to_string())
+      .filter(|value| !value.is_empty())
+      .unwrap_or(fallback_name);
+
+    let service = ServiceConfig {
+      id: new_id(),
+      name,
+      service_kind: ServiceKind::Rust,
+      framework: Some("rust".to_string()),
+      launch_type: LaunchType::CargoRun,
+      working_dir: project_dir.to_string(),
+      command: "cargo".to_string(),
+      args: Vec::new(),
+      env: HashMap::new(),
+      port: None,
+      url: None,
+      profiles: Vec::new(),
+      frontend_script: None,
+      maven_force_update: false,
+      maven_debug_mode: false,
+      maven_disable_fork: false,
+      main_class: None,
+      classpath: None,
+      jvm_args: Vec::new(),
+    };
+
+    {
+      let mut inner = self.inner.lock().await;
+      inner.services.push(service.clone());
+      inner.runtime.insert(
+        service.id.clone(),
+        RuntimeState {
+          service_id: service.id.clone(),
+          status: RuntimeStatus::Stopped,
+          pid: None,
+          started_at: None,
+          elapsed_seconds: None,
+          exit_code: None,
+          message: None,
+          detected_port: None,
+          detected_url: None,
+          failure_summary: None,
+          failure_category: None,
+        },
+      );
+    }
+
+    self.persist_state().await?;
+    self.emit_snapshot().await;
+    Ok(service)
   }
 
   async fn detect_project(&self, project_dir: &str) -> BackendResult<ProjectDetection> {
@@ -735,12 +841,15 @@ impl ServicePilotBackend {
       if let Some(frontend_script) = select_frontend_script(&package) {
         let name = package
           .name
+          .as_deref()
           .map(|value| value.trim().to_string())
           .filter(|value| !value.is_empty())
           .unwrap_or_else(|| fallback_name.clone());
         return Ok(ProjectDetection {
           name,
           service_kind: ServiceKind::Vue,
+          framework: detect_frontend_framework(&package, &project_root)
+            .or_else(|| detect_package_manager_framework(&project_root)),
           launch_type: LaunchType::VuePreset,
           command: detect_frontend_package_manager(&project_root),
           frontend_script: Some(frontend_script),
@@ -748,102 +857,40 @@ impl ServicePilotBackend {
       }
     }
 
+    let cargo_file = project_root.join("Cargo.toml");
+    if fs::metadata(&cargo_file).await.is_ok() {
+      let content = fs::read_to_string(&cargo_file).await.map_err(|error| {
+        format!(
+          "Failed to read Cargo.toml {}: {error}",
+          cargo_file.display()
+        )
+      })?;
+      if let Ok(manifest) = toml::from_str::<CargoManifest>(&content) {
+        let name = manifest
+          .package
+          .and_then(|pkg| pkg.name)
+          .map(|value| value.trim().to_string())
+          .filter(|value| !value.is_empty())
+          .unwrap_or_else(|| fallback_name.clone());
+        return Ok(ProjectDetection {
+          name,
+          service_kind: ServiceKind::Rust,
+          framework: Some("rust".to_string()),
+          launch_type: LaunchType::CargoRun,
+          command: "cargo".to_string(),
+          frontend_script: None,
+        });
+      }
+    }
+
     Ok(ProjectDetection {
       name: fallback_name,
       service_kind: ServiceKind::Spring,
+      framework: Some("spring-boot".to_string()),
       launch_type: LaunchType::JavaMain,
       command: String::new(),
       frontend_script: None,
     })
-  }
-
-  async fn quick_start_project(&self, project_dir: &str) -> BackendResult<ServiceConfig> {
-    let has_package_json = Path::new(project_dir).join("package.json").exists();
-
-    if let Some(service) = self.import_frontend_project(project_dir).await? {
-      self
-        .mark_project_preparing(&service.id, "Preparing project startup...".to_string())
-        .await;
-      let backend = self.clone();
-      let service_id = service.id.clone();
-      tauri::async_runtime::spawn(async move {
-        if let Err(error) = backend.start_service(&service_id).await {
-          backend
-            .mark_process_failed(&service_id, error, FailureCategory::Process)
-            .await;
-        }
-      });
-      return Ok(service);
-    }
-
-    let prepared = match self.prepare_idea_project(project_dir, false).await {
-      Ok(prepared) => prepared,
-      Err(error) if has_package_json => {
-        return Err(format!(
-          "No frontend dev script found in package.json, and Spring Boot IDEA import also failed: {error}"
-        ));
-      }
-      Err(error) => return Err(error),
-    };
-
-    let service = self
-      .save_imported_project_service(
-        prepared.service.clone(),
-        &prepared.imported_settings,
-        RuntimeStatus::Starting,
-        Some("Preparing project startup...".to_string()),
-      )
-      .await?;
-    self
-      .append_log(
-        &service.id,
-        LogSource::System,
-        "Preparing Java classpath in the background...".to_string(),
-      )
-      .await;
-
-    let backend = self.clone();
-    let service_id = service.id.clone();
-    let working_dir = service.working_dir.clone();
-    let env = service.env.clone();
-    let settings = prepared.prepared_settings.clone();
-    tauri::async_runtime::spawn(async move {
-      let result = async {
-        let classpath = backend
-          .build_idea_java_main_classpath(&working_dir, &settings, &env)
-          .await?;
-        if !backend.should_continue_background_start(&service_id).await {
-          return Ok(());
-        }
-        backend
-          .update_service_classpath(&service_id, classpath)
-          .await?;
-        backend
-          .append_log(
-            &service_id,
-            LogSource::System,
-            "Java classpath prepared. Launching service...".to_string(),
-          )
-          .await;
-        backend.start_service(&service_id).await
-      }
-      .await;
-
-      if let Err(error) = result {
-        backend
-          .append_log(&service_id, LogSource::System, error)
-          .await;
-        backend
-          .mark_process_failed(
-            &service_id,
-            classpath_preparation_failed_message(),
-            FailureCategory::Compile,
-          )
-          .await;
-      }
-    });
-
-    Ok(service)
   }
 
   async fn import_frontend_project(
@@ -876,6 +923,7 @@ impl ServicePilotBackend {
     let working_dir = project_root.to_string_lossy().to_string();
     let name = package
       .name
+      .as_deref()
       .map(|value| value.trim().to_string())
       .filter(|value| !value.is_empty())
       .or_else(|| {
@@ -886,6 +934,9 @@ impl ServicePilotBackend {
       })
       .unwrap_or_else(|| "frontend-service".to_string());
     let command = detect_frontend_package_manager(&project_root);
+    let framework = detect_frontend_framework(&package, &project_root)
+      .or_else(|| detect_package_manager_framework(&project_root))
+      .or_else(|| Some("frontend".to_string()));
 
     let existing_service_id = {
       let inner = self.inner.lock().await;
@@ -900,6 +951,7 @@ impl ServicePilotBackend {
       id: existing_service_id.unwrap_or_else(new_id),
       name,
       service_kind: ServiceKind::Vue,
+      framework,
       launch_type: LaunchType::VuePreset,
       working_dir,
       command,
@@ -1408,9 +1460,14 @@ impl ServicePilotBackend {
       .await;
 
     let service_kind = service.service_kind.clone();
+    let service_name = service.name.clone();
+    let main_class = service.main_class.clone();
     if let Some(stdout) = child.stdout.take() {
       let backend = self.clone();
       let service_id = service_id.to_string();
+      let service_kind = service_kind.clone();
+      let service_name = service_name.clone();
+      let main_class = main_class.clone();
       tauri::async_runtime::spawn(async move {
         let mut reader = BufReader::new(stdout);
         let mut bytes = Vec::new();
@@ -1421,14 +1478,10 @@ impl ServicePilotBackend {
           let line = decode_process_line(&bytes);
           bytes.clear();
           // 检测 Spring Boot 启动完成标志
-          if matches!(service_kind, ServiceKind::Spring) {
-            let line_lower = line.to_lowercase();
-            if (line_lower.contains("started") && line_lower.contains("application"))
-              || (line_lower.contains("started") && line_lower.contains("umsp"))
-              || (line_lower.contains("started") && line_lower.contains("seconds"))
-            {
-              backend.mark_service_running(&service_id).await;
-            }
+          if matches!(service_kind, ServiceKind::Spring)
+            && is_spring_started_line(&line, &service_name, main_class.as_deref())
+          {
+            backend.mark_service_running(&service_id).await;
           }
           backend
             .append_log(&service_id, LogSource::Stdout, line)
@@ -1440,6 +1493,9 @@ impl ServicePilotBackend {
     if let Some(stderr) = child.stderr.take() {
       let backend = self.clone();
       let service_id = service_id.to_string();
+      let service_kind = service_kind.clone();
+      let service_name = service_name.clone();
+      let main_class = main_class.clone();
       tauri::async_runtime::spawn(async move {
         let mut reader = BufReader::new(stderr);
         let mut bytes = Vec::new();
@@ -1449,6 +1505,11 @@ impl ServicePilotBackend {
           }
           let line = decode_process_line(&bytes);
           bytes.clear();
+          if matches!(service_kind, ServiceKind::Spring)
+            && is_spring_started_line(&line, &service_name, main_class.as_deref())
+          {
+            backend.mark_service_running(&service_id).await;
+          }
           backend
             .append_log(&service_id, LogSource::Stderr, line)
             .await;
@@ -1752,13 +1813,29 @@ impl ServicePilotBackend {
       }
     }
 
+    let service_kind = input.service_kind;
+    let command = input.command.trim().to_string();
+    let framework = if let Some(framework) = normalize_framework(input.framework) {
+      Some(framework)
+    } else {
+      match service_kind {
+        ServiceKind::Spring => Some("spring-boot".to_string()),
+        ServiceKind::Vue => detect_frontend_framework_from_dir(Path::new(&working_dir))
+          .await
+          .or_else(|| infer_command_framework(&command))
+          .or_else(|| Some("frontend".to_string())),
+        ServiceKind::Rust => None,
+      }
+    };
+
     Ok(ServiceConfig {
       id: input.id.unwrap_or_else(new_id),
       name: input.name.trim().to_string(),
-      service_kind: input.service_kind,
+      service_kind,
+      framework,
       launch_type: input.launch_type,
       working_dir,
-      command: input.command.trim().to_string(),
+      command,
       args: input
         .args
         .into_iter()
@@ -1823,6 +1900,14 @@ impl ServicePilotBackend {
           LaunchType::Custom | LaunchType::VuePreset
         ) {
           return Err("Vue services only support custom or vue-preset launch types.".to_string());
+        }
+      }
+      ServiceKind::Rust => {
+        if !matches!(
+          service.launch_type,
+          LaunchType::Custom | LaunchType::CargoRun
+        ) {
+          return Err("Rust services only support custom or cargo-run launch types.".to_string());
         }
       }
     }
@@ -2225,18 +2310,6 @@ impl ServicePilotBackend {
     Ok(())
   }
 
-  async fn should_continue_background_start(&self, service_id: &str) -> bool {
-    let inner = self.inner.lock().await;
-    inner
-      .runtime
-      .get(service_id)
-      .map(|runtime| {
-        matches!(runtime.status, RuntimeStatus::Starting)
-          && !inner.processes.contains_key(service_id)
-      })
-      .unwrap_or(false)
-  }
-
   async fn validate_imported_state(&self, state: &PersistedState) -> BackendResult<()> {
     let mut ids = HashSet::new();
     let mut names = HashSet::new();
@@ -2372,6 +2445,7 @@ impl ServicePilotBackend {
     Some(ScannedService {
       name,
       working_dir: dir.to_string_lossy().to_string(),
+      framework: Some("spring-boot".to_string()),
       port,
     })
   }
@@ -2784,14 +2858,6 @@ async fn import_project(
 }
 
 #[tauri::command]
-async fn quick_start_project(
-  state: State<'_, AppState>,
-  project_dir: String,
-) -> BackendResult<ServiceConfig> {
-  state.backend.quick_start_project(&project_dir).await
-}
-
-#[tauri::command]
 async fn export_state(app: AppHandle<Wry>, state: State<'_, AppState>) -> BackendResult<()> {
   let language = state.backend.dialog_language().await;
   let title = match language {
@@ -3092,7 +3158,6 @@ pub fn run() {
       pick_file,
       import_idea_maven_config,
       import_project,
-      quick_start_project,
       import_idea_project,
       export_state,
       import_state,
@@ -3613,6 +3678,25 @@ fn create_launch_spec(service: &ServiceConfig, settings: &AppSettings) -> Launch
         command_line: to_command_line(&command, &args),
       }
     }
+    LaunchType::CargoRun => {
+      let command = if service.command.is_empty() {
+        "cargo".to_string()
+      } else {
+        service.command.clone()
+      };
+      let mut args = vec!["run".to_string()];
+      if let Some(port) = service.port {
+        args.push("--".to_string());
+        args.push(format!("--port={port}"));
+      }
+      args.extend(service.args.clone());
+      LaunchSpec {
+        command: command.clone(),
+        args: args.clone(),
+        env: service.env.clone(),
+        command_line: to_command_line(&command, &args),
+      }
+    }
   }
 }
 
@@ -3721,6 +3805,37 @@ fn log_level(text: &str, source: &LogSource) -> &'static str {
     }
   }
   "INFO"
+}
+
+fn is_spring_started_line(line: &str, service_name: &str, main_class: Option<&str>) -> bool {
+  let line_lower = line.to_lowercase();
+  if !line_lower.contains("started") {
+    return false;
+  }
+  if line_lower.contains("application") || line_lower.contains("seconds") {
+    return true;
+  }
+
+  let service_name_lower = service_name.to_lowercase();
+  if !service_name_lower.trim().is_empty() && line_lower.contains(&service_name_lower) {
+    return true;
+  }
+
+  let Some(main_class) = main_class else {
+    return false;
+  };
+  let main_class_lower = main_class.to_lowercase();
+  if main_class_lower.trim().is_empty() {
+    return false;
+  }
+  if line_lower.contains(&main_class_lower) {
+    return true;
+  }
+  main_class_lower
+    .rsplit('.')
+    .next()
+    .filter(|simple_name| !simple_name.is_empty())
+    .is_some_and(|simple_name| line_lower.contains(simple_name))
 }
 
 fn is_exception_start(text: &str) -> bool {
@@ -4589,6 +4704,11 @@ fn validate_safe_launch_policy(service: &ServiceConfig) -> BackendResult<()> {
         }
       }
     }
+    LaunchType::CargoRun => {
+      if !is_cargo_command(&service.command) {
+        return Err("Cargo run launch must use cargo.".to_string());
+      }
+    }
     LaunchType::Custom => {
       if !is_allowed_custom_launch_command(service) {
         return Err(
@@ -4696,6 +4816,10 @@ fn is_gradle_command(command: &str) -> bool {
   matches!(executable_stem(command).as_str(), "gradle" | "gradlew")
 }
 
+fn is_cargo_command(command: &str) -> bool {
+  executable_stem(command) == "cargo"
+}
+
 fn is_node_package_manager_command(command: &str) -> bool {
   matches!(
     executable_stem(command).as_str(),
@@ -4718,6 +4842,107 @@ fn detect_frontend_package_manager(project_root: &Path) -> String {
     return "bun".to_string();
   }
   "npm".to_string()
+}
+
+fn detect_package_manager_framework(project_root: &Path) -> Option<String> {
+  Some(detect_frontend_package_manager(project_root))
+}
+
+async fn detect_frontend_framework_from_dir(project_root: &Path) -> Option<String> {
+  let package_file = project_root.join("package.json");
+  let content = fs::read_to_string(&package_file).await.ok()?;
+  let package = serde_json::from_str::<PackageJson>(&content).ok()?;
+  detect_frontend_framework(&package, project_root).or_else(|| detect_package_manager_framework(project_root))
+}
+
+fn detect_frontend_framework(package: &PackageJson, project_root: &Path) -> Option<String> {
+  [
+    ("nextjs", ["next"].as_slice()),
+    ("nuxt", ["nuxt", "nuxi"].as_slice()),
+    ("angular", ["@angular/core", "@angular/cli"].as_slice()),
+    ("svelte", ["svelte", "@sveltejs/kit"].as_slice()),
+    ("astro", ["astro"].as_slice()),
+    ("remix", ["@remix-run/react", "@remix-run/dev"].as_slice()),
+    ("storybook", ["storybook", "@storybook/react", "@storybook/vue3", "@storybook/svelte"].as_slice()),
+    ("vue", ["vue", "@vitejs/plugin-vue"].as_slice()),
+    ("react", ["react", "react-dom", "@vitejs/plugin-react"].as_slice()),
+    ("vite", ["vite"].as_slice()),
+    ("tauri", ["@tauri-apps/api", "@tauri-apps/cli"].as_slice()),
+  ]
+  .iter()
+  .find_map(|(framework, packages)| {
+    packages
+      .iter()
+      .any(|package_name| package_has_dependency(package, package_name))
+      .then(|| (*framework).to_string())
+  })
+  .or_else(|| {
+    if project_root.join("src-tauri").is_dir() {
+      Some("tauri".to_string())
+    } else {
+      None
+    }
+  })
+  .or_else(|| infer_script_framework(package))
+}
+
+fn package_has_dependency(package: &PackageJson, dependency: &str) -> bool {
+  package.dependencies.contains_key(dependency)
+    || package.dev_dependencies.contains_key(dependency)
+    || package.peer_dependencies.contains_key(dependency)
+}
+
+fn infer_script_framework(package: &PackageJson) -> Option<String> {
+  package.scripts.values().find_map(|script| {
+    let command = script.as_str()?.to_ascii_lowercase();
+    [
+      ("nextjs", "next dev"),
+      ("nuxt", "nuxt dev"),
+      ("nuxt", "nuxi dev"),
+      ("angular", "ng serve"),
+      ("svelte", "svelte-kit dev"),
+      ("astro", "astro dev"),
+      ("remix", "remix dev"),
+      ("storybook", "storybook"),
+      ("vite", "vite"),
+    ]
+    .iter()
+    .find_map(|(framework, token)| command.contains(token).then(|| (*framework).to_string()))
+  })
+}
+
+fn infer_command_framework(command: &str) -> Option<String> {
+  match executable_stem(command).as_str() {
+    "node" | "npx" => Some("node".to_string()),
+    "npm" => Some("npm".to_string()),
+    "pnpm" => Some("pnpm".to_string()),
+    "yarn" => Some("yarn".to_string()),
+    "bun" => Some("bun".to_string()),
+    "vite" => Some("vite".to_string()),
+    "java" => Some("java".to_string()),
+    "mvn" | "mvnw" => Some("maven".to_string()),
+    "gradle" | "gradlew" => Some("gradle".to_string()),
+    "cargo" => Some("rust".to_string()),
+    _ => None,
+  }
+}
+
+fn normalize_framework(value: Option<String>) -> Option<String> {
+  let value = value?.trim().to_ascii_lowercase();
+  let normalized = match value.as_str() {
+    "" => return None,
+    "spring" | "springboot" | "spring-boot" => "spring-boot",
+    "next" | "next.js" | "nextjs" => "nextjs",
+    "node.js" | "nodejs" | "node" => "node",
+    "vuejs" | "vue.js" | "vue" => "vue",
+    "reactjs" | "react.js" | "react" => "react",
+    "tauri-apps" | "tauri" => "tauri",
+    "angular" | "svelte" | "astro" | "remix" | "storybook" | "vite" | "nuxt" | "npm"
+    | "pnpm" | "yarn" | "bun" | "rust" | "java" | "maven" | "gradle" | "frontend"
+    | "service" => value.as_str(),
+    _ => value.as_str(),
+  };
+  Some(normalized.to_string())
 }
 
 fn build_frontend_dev_args(service: &ServiceConfig) -> Vec<String> {
@@ -4854,6 +5079,7 @@ fn is_allowed_custom_launch_command(service: &ServiceConfig) -> bool {
     ServiceKind::Vue => {
       is_node_package_manager_command(&service.command) || is_node_dev_command(&service.command)
     }
+    ServiceKind::Rust => is_cargo_command(&service.command),
   }
 }
 
@@ -5010,6 +5236,7 @@ mod tests {
       id: "service-1".to_string(),
       name: "service".to_string(),
       service_kind,
+      framework: None,
       launch_type,
       working_dir: "D:\\workspace\\service".to_string(),
       command: command.to_string(),
@@ -5035,6 +5262,9 @@ mod tests {
         .iter()
         .map(|(name, value)| ((*name).to_string(), value.clone()))
         .collect(),
+      dependencies: HashMap::new(),
+      dev_dependencies: HashMap::new(),
+      peer_dependencies: HashMap::new(),
     }
   }
 
@@ -5262,5 +5492,29 @@ mod tests {
       None
     );
     assert_eq!(extract_port("management.server.port=9001"), None);
+  }
+
+  #[test]
+  fn spring_started_line_matches_standard_and_service_specific_logs() {
+    assert!(is_spring_started_line(
+      "Started Application in 9.234 seconds (JVM running for 10.001)",
+      "CapfSealServiceApplication",
+      Some("com.azt.easysign.capf.seal.service.CapfSealServiceApplication")
+    ));
+    assert!(is_spring_started_line(
+      "Started CapfSealServiceApplication",
+      "CapfSealServiceApplication",
+      Some("com.azt.easysign.capf.seal.service.CapfSealServiceApplication")
+    ));
+    assert!(is_spring_started_line(
+      "Started capf seal service",
+      "Capf Seal Service",
+      None
+    ));
+    assert!(!is_spring_started_line(
+      "Starting CapfSealServiceApplication",
+      "CapfSealServiceApplication",
+      Some("com.azt.easysign.capf.seal.service.CapfSealServiceApplication")
+    ));
   }
 }

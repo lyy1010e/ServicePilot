@@ -53,7 +53,6 @@ function createMockApi(initialSnapshot: AppSnapshot): ServicePilotApi {
     }),
     importIdeaMavenConfig: vi.fn().mockResolvedValue(initialSnapshot.settings),
     importProject: vi.fn().mockResolvedValue(springService()),
-    quickStartProject: vi.fn().mockResolvedValue(springService()),
     importIdeaProject: vi.fn().mockResolvedValue(springService()),
     importState: vi.fn().mockResolvedValue(undefined),
     exportState: vi.fn().mockResolvedValue(undefined),
@@ -185,7 +184,7 @@ describe('App service flows', () => {
     vi.mocked(api.checkUpdate).mockResolvedValue({
       version: '1.0.6',
       currentVersion: '1.0.5',
-      notes: null,
+      notes: '## New\n\n- Added release notes in updater.',
       date: null
     });
 
@@ -194,6 +193,7 @@ describe('App service flows', () => {
     await user.click(screen.getByRole('button', { name: 'Update Now' }));
 
     expect(screen.getByText(/Update directly to ServicePilot 1\.0\.6/)).toBeInTheDocument();
+    expect(screen.getByText(/Added release notes in updater/)).toBeInTheDocument();
     expect(api.startWindowDrag).not.toHaveBeenCalled();
 
     const updateButtons = screen.getAllByRole('button', { name: 'Update Now' });

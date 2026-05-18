@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Next.js">
+  <circle cx="128" cy="128" r="118" fill="#000"/>
+  <path fill="#fff" d="M83 72h31l59 91V72h24v112h-31l-59-91v91H83Z"/>
+  <path fill="#fff" d="M165 184 95 72h27l70 112Z" opacity=".72"/>
+</svg>

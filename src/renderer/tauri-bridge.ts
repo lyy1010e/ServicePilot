@@ -101,7 +101,6 @@ export function createServicePilotApi(): ServicePilotApi {
     detectProject: (projectDir) => invoke<ProjectDetection>('detect_project', { projectDir }),
     importIdeaMavenConfig: (projectDir) => invoke<AppSettings>('import_idea_maven_config', { projectDir }),
     importProject: (projectDir) => invoke<ServiceConfig>('import_project', { projectDir }),
-    quickStartProject: (projectDir) => invoke<ServiceConfig>('quick_start_project', { projectDir }),
     importIdeaProject: (projectDir) => invoke<ServiceConfig>('import_idea_project', { projectDir }),
     importState: () => invoke<void>('import_state'),
     exportState: () => invoke<void>('export_state'),

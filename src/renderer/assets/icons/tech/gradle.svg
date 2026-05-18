@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 180" role="img" aria-label="Gradle">
+  <path fill="#02303A" d="M29 143c-14-30-6-67 20-90 26-23 63-28 94-13 17-24 54-24 71 0 12 17 9 41-7 54 7 13 9 29 5 49Z"/>
+  <circle cx="77" cy="87" r="8" fill="#fff"/>
+  <circle cx="151" cy="87" r="8" fill="#fff"/>
+  <path fill="none" stroke="#fff" stroke-linecap="round" stroke-width="9" d="M91 122c19 12 43 12 62 0"/>
+</svg>

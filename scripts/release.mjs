@@ -1,10 +1,11 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import { access, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const version = process.argv[2];
+const releaseNotesPath = path.join(root, 'docs', 'releases', `v${version}.md`);
 
 if (!version) {
   console.error('用法: node scripts/release.mjs <版本号>');
@@ -32,7 +33,11 @@ await updateJson(path.join(root, 'src-tauri', 'tauri.conf.json'), (json) => {
 });
 
 console.log('==> 提交并推送');
-await run('git', ['add', 'package.json', 'src-tauri/Cargo.toml', 'src-tauri/tauri.conf.json']);
+const filesToCommit = ['package.json', 'src-tauri/Cargo.toml', 'src-tauri/tauri.conf.json'];
+if (await fileExists(releaseNotesPath)) {
+  filesToCommit.push(path.relative(root, releaseNotesPath));
+}
+await run('git', ['add', ...filesToCommit]);
 await run('git', ['commit', '-m', `release: v${version}`]);
 await run('git', ['push', 'origin', 'master']);
 
@@ -54,6 +59,18 @@ async function updateCargoVersion(filePath, ver) {
   let content = await readFile(filePath, 'utf8');
   content = content.replace(/^version = "[^"]*"/m, `version = "${ver}"`);
   await writeFile(filePath, content, 'utf8');
+}
+
+async function fileExists(filePath) {
+  try {
+    await access(filePath);
+    return true;
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      return false;
+    }
+    throw error;
+  }
 }
 
 async function run(cmd, args) {

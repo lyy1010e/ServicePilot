@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Rust">
+  <circle cx="128" cy="128" r="92" fill="#000"/>
+  <circle cx="128" cy="128" r="56" fill="#fff"/>
+  <path fill="#000" d="M91 92h50c25 0 38 11 38 30 0 13-7 23-20 27l26 38h-36l-22-33h-6v33H91Zm30 41h17c7 0 11-4 11-10 0-7-4-10-11-10h-17Z"/>
+</svg>

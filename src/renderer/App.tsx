@@ -1,4 +1,4 @@
-import { memo, startTransition, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { memo, startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import type {
   AppSettings,
   AppLanguage,
@@ -23,6 +23,30 @@ import {
   parseProfiles,
   toggleValue
 } from './app-utils';
+import servicePilotLogo from './assets/icons/brand/servicepilot.svg';
+import angularIcon from './assets/icons/tech/angular.svg';
+import astroIcon from './assets/icons/tech/astro.svg';
+import bunIcon from './assets/icons/tech/bun.svg';
+import frontendIcon from './assets/icons/tech/frontend.svg';
+import gradleIcon from './assets/icons/tech/gradle.svg';
+import javaIcon from './assets/icons/tech/java.svg';
+import mavenIcon from './assets/icons/tech/maven.svg';
+import nextjsIcon from './assets/icons/tech/nextjs.svg';
+import nodeIcon from './assets/icons/tech/node.svg';
+import npmIcon from './assets/icons/tech/npm.svg';
+import nuxtIcon from './assets/icons/tech/nuxt.svg';
+import pnpmIcon from './assets/icons/tech/pnpm.svg';
+import reactIcon from './assets/icons/tech/react.svg';
+import remixIcon from './assets/icons/tech/remix.svg';
+import rustIcon from './assets/icons/tech/rust.svg';
+import serviceIcon from './assets/icons/tech/service.svg';
+import springBootIcon from './assets/icons/tech/spring-boot.svg';
+import storybookIcon from './assets/icons/tech/storybook.svg';
+import svelteIcon from './assets/icons/tech/svelte.svg';
+import tauriIcon from './assets/icons/tech/tauri.svg';
+import viteIcon from './assets/icons/tech/vite.svg';
+import vueIcon from './assets/icons/tech/vue.svg';
+import yarnIcon from './assets/icons/tech/yarn.svg';
 
 const EMPTY_SNAPSHOT: AppSnapshot = {
   services: [],
@@ -43,6 +67,32 @@ type LogLevelFilter = 'ALL' | LogLevel;
 
 const LOG_LEVELS: LogLevel[] = ['ERROR', 'WARN', 'INFO', 'DEBUG', 'TRACE', 'SYSTEM'];
 const LOG_LEVEL_FILTERS: LogLevelFilter[] = ['ALL', ...LOG_LEVELS];
+
+const TECH_ICON_META: Record<string, { src: string; label: string }> = {
+  'spring-boot': { src: springBootIcon, label: 'Spring Boot' },
+  vue: { src: vueIcon, label: 'Vue' },
+  react: { src: reactIcon, label: 'React' },
+  vite: { src: viteIcon, label: 'Vite' },
+  nextjs: { src: nextjsIcon, label: 'Next.js' },
+  nuxt: { src: nuxtIcon, label: 'Nuxt' },
+  angular: { src: angularIcon, label: 'Angular' },
+  svelte: { src: svelteIcon, label: 'Svelte' },
+  astro: { src: astroIcon, label: 'Astro' },
+  remix: { src: remixIcon, label: 'Remix' },
+  storybook: { src: storybookIcon, label: 'Storybook' },
+  node: { src: nodeIcon, label: 'Node.js' },
+  npm: { src: npmIcon, label: 'npm' },
+  pnpm: { src: pnpmIcon, label: 'pnpm' },
+  yarn: { src: yarnIcon, label: 'Yarn' },
+  bun: { src: bunIcon, label: 'Bun' },
+  tauri: { src: tauriIcon, label: 'Tauri' },
+  rust: { src: rustIcon, label: 'Rust' },
+  java: { src: javaIcon, label: 'Java' },
+  maven: { src: mavenIcon, label: 'Maven' },
+  gradle: { src: gradleIcon, label: 'Gradle' },
+  frontend: { src: frontendIcon, label: 'Frontend' },
+  service: { src: serviceIcon, label: 'Service' }
+};
 
 type IconName =
   | 'menuService'
@@ -76,7 +126,6 @@ type IconName =
   | 'star'
   | 'clearLogs'
   | 'autoScroll'
-  | 'spring'
   | 'serviceMark'
   | 'gear'
   | 'chevronDown'
@@ -202,7 +251,6 @@ type Copy = {
   mavenLocalRepository: string;
   mavenLocalRepositoryHint: string;
   importIdeaConfig: string;
-  quickStartIdeaProject: string;
   ideaProject: string;
   rootCause?: string;
   settingsSaved: string;
@@ -278,8 +326,8 @@ const COPY: Record<AppLanguage, Copy> = {
     manageGroups: '管理分组',
     noServices: '当前没有符合筛选条件的服务。',
     noLogService: '未选择日志服务',
-    noLogs: '暂无日志',
-    noLogsDesc: '服务启动后将在这里实时显示日志',
+    noLogs: '等待服务输出日志...',
+    noLogsDesc: '服务启动后将在这里实时显示输出',
     deleteConfirm: (name) => `确认删除服务"${name}"吗？此操作不可恢复。`,
     quitConfirm: '退出后将停掉所有正在运行的服务，确认退出吗？',
     statusLabel: {
@@ -298,7 +346,7 @@ const COPY: Record<AppLanguage, Copy> = {
     },
     createService: '新建服务',
     updateService: '编辑服务',
-    serviceModalDesc: '配置本地 Spring Boot 或 Vue 服务。',
+    serviceModalDesc: '配置本地 Spring Boot、Vue 或 Rust 服务。',
     createGroup: '新建分组',
     updateGroup: '编辑分组',
     groupModalDesc: '保存一个常用联调服务组合。',
@@ -358,7 +406,6 @@ const COPY: Record<AppLanguage, Copy> = {
     mavenLocalRepository: '本地仓库',
     mavenLocalRepositoryHint: '例如：D:\\environment\\repository',
     importIdeaConfig: '从 IDEA 项目读取',
-    quickStartIdeaProject: '选择项目并启动',
     ideaProject: 'IDEA 项目',
     settingsSaved: '设置已保存。',
     settingsSave: '保存',
@@ -431,8 +478,8 @@ const COPY: Record<AppLanguage, Copy> = {
     manageGroups: 'Manage Groups',
     noServices: 'No services match the current filter.',
     noLogService: 'No log service selected',
-    noLogs: 'No logs yet',
-    noLogsDesc: 'Service logs will stream here in real time after startup.',
+    noLogs: 'Waiting for service log output...',
+    noLogsDesc: 'Service output will stream here after startup.',
     deleteConfirm: (name) => `Delete service "${name}"? This action cannot be undone.`,
     quitConfirm: 'All running services will be stopped on quit. Continue?',
     statusLabel: {
@@ -451,7 +498,7 @@ const COPY: Record<AppLanguage, Copy> = {
     },
     createService: 'Create Service',
     updateService: 'Edit Service',
-    serviceModalDesc: 'Configure a local Spring Boot or Vue service.',
+    serviceModalDesc: 'Configure a local Spring Boot, Vue, or Rust service.',
     createGroup: 'Create Group',
     updateGroup: 'Edit Group',
     groupModalDesc: 'Save a reusable service group.',
@@ -511,7 +558,6 @@ const COPY: Record<AppLanguage, Copy> = {
     mavenLocalRepository: 'Local Repository',
     mavenLocalRepositoryHint: 'For example: D:\\environment\\repository',
     importIdeaConfig: 'Read From IDEA Project',
-    quickStartIdeaProject: 'Select Project & Start',
     ideaProject: 'IDEA Project',
     rootCause: 'Root Cause',
     settingsSaved: 'Settings saved.',
@@ -658,17 +704,22 @@ function AppIcon({ icon, size = 18, className = '' }: { icon: IconName; size?: n
         </svg>
       );
     case 'batchStart':
+      return (
+        <svg {...common}>
+          <path d="M8 5.6l10.2 6.4L8 18.4z" fill="currentColor" stroke="none" />
+        </svg>
+      );
     case 'start':
       return (
         <svg {...common}>
-          <path d="M8 6l10 6-10 6z" fill="currentColor" stroke="none" />
+          <path d="M8 5.6l10.2 6.4L8 18.4z" />
         </svg>
       );
     case 'batchStop':
     case 'stop':
       return (
         <svg {...common}>
-          <rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor" stroke="none" />
+          <rect x="6.2" y="6.2" width="11.6" height="11.6" rx="1.8" fill="currentColor" stroke="none" />
         </svg>
       );
     case 'addService':
@@ -771,8 +822,9 @@ function AppIcon({ icon, size = 18, className = '' }: { icon: IconName; size?: n
     case 'restart':
       return (
         <svg {...common}>
-          <path d="M19 12a7 7 0 1 1-2-4.9" />
-          <path d="M19 5v5h-5" />
+          <path d="M19.4 8.1A8.1 8.1 0 1 0 18 16.7" />
+          <path d="M19.4 4.2v5.6h-5.6" />
+          <path d="M9.2 6.8l8.5 5.2-8.5 5.2z" fill="#4ade80" stroke="none" />
         </svg>
       );
     case 'delete':
@@ -786,7 +838,9 @@ function AppIcon({ icon, size = 18, className = '' }: { icon: IconName; size?: n
     case 'more':
       return (
         <svg {...common}>
-          <path d="M6 9l6 6 6-6" />
+          <circle cx="12" cy="5.8" r="1.4" fill="currentColor" stroke="none" />
+          <circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none" />
+          <circle cx="12" cy="18.2" r="1.4" fill="currentColor" stroke="none" />
         </svg>
       );
     case 'external':
@@ -818,13 +872,6 @@ function AppIcon({ icon, size = 18, className = '' }: { icon: IconName; size?: n
           <circle cx="12" cy="12" r="9" />
           <path d="M12 8v8" />
           <path d="M8.5 13.5L12 17l3.5-3.5" />
-        </svg>
-      );
-    case 'spring':
-      return (
-        <svg {...common}>
-          <path d="M6 14c2.5 3.5 7.8 4.2 11 1.2 3.2-3 3.5-8.2.8-11.2-.8 2.5-2.7 4.7-5.4 5.7-2.6 1-5.3.6-7.4-.7-.6 1.6-.2 3.5 1 5z" />
-          <path d="M8 16c1.4-3.4 4.5-5.7 8.5-6" />
         </svg>
       );
     case 'serviceMark':
@@ -926,6 +973,9 @@ function getDefaultCommand(launchType: ServiceConfig['launchType']): string {
   if (launchType === 'vue-preset') {
     return 'npm';
   }
+  if (launchType === 'cargo-run') {
+    return 'cargo';
+  }
   return '';
 }
 
@@ -1023,20 +1073,38 @@ function getStatusTone(status: RuntimeState['status']): 'running' | 'stopped' | 
   return 'stopped';
 }
 
-function resolveRuntimeUrl(service: ServiceConfig, runtime?: RuntimeState): string | undefined {
-  if (runtime?.detectedUrl) {
-    return runtime.detectedUrl;
+function getServiceAvatarTone(index: number): 'blue' | 'green' | 'purple' | 'amber' | 'rose' {
+  const tones = ['blue', 'green', 'purple', 'amber', 'rose'] as const;
+  return tones[index % tones.length];
+}
+
+function normalizeFrameworkIconKey(service: ServiceConfig): string {
+  const framework = service.framework?.trim().toLowerCase();
+  if (framework && TECH_ICON_META[framework]) {
+    return framework;
   }
-  if (service.url) {
-    return service.url;
+  if (service.serviceKind === 'spring') {
+    return 'spring-boot';
   }
-  if (runtime?.detectedPort) {
-    return `http://localhost:${runtime.detectedPort}`;
+  return 'service';
+}
+
+function ServiceTechIcon({ service, index }: { service: ServiceConfig; index: number }) {
+  const iconKey = normalizeFrameworkIconKey(service);
+  const icon = TECH_ICON_META[iconKey];
+  if (icon) {
+    return (
+      <span className="service-row__avatar service-row__avatar--tech" title={icon.label}>
+        <img alt="" src={icon.src} />
+      </span>
+    );
   }
-  if (service.port) {
-    return `http://localhost:${service.port}`;
-  }
-  return undefined;
+
+  return (
+    <span className={`service-row__avatar service-row__avatar--${getServiceAvatarTone(index)}`}>
+      <AppIcon icon="serviceMark" size={15} />
+    </span>
+  );
 }
 
 function resolveRuntimePort(service: ServiceConfig, runtime?: RuntimeState): string | undefined {
@@ -1059,6 +1127,9 @@ function getLaunchCommandPreview(service: ServiceConfig): string {
   if (service.launchType === 'vue-preset') {
     const script = service.frontendScript || 'dev';
     return service.port ? `${service.command || 'npm'} run ${script} -- --port ${service.port}` : `${service.command || 'npm'} run ${script}`;
+  }
+  if (service.launchType === 'cargo-run') {
+    return service.port ? `${service.command || 'cargo'} run -- --port ${service.port}` : `${service.command || 'cargo'} run`;
   }
   return [service.command, ...service.args].filter(Boolean).join(' ');
 }
@@ -1190,7 +1261,8 @@ function ActionButton({
   type = 'button',
   iconOnly = false,
   hideLabel = false,
-  hideIcon = false
+  hideIcon = false,
+  className = ''
 }: {
   icon: IconName;
   label: string;
@@ -1202,12 +1274,13 @@ function ActionButton({
   iconOnly?: boolean;
   hideLabel?: boolean;
   hideIcon?: boolean;
+  className?: string;
 }) {
   const labelHidden = iconOnly || hideLabel;
 
   return (
     <button
-      className={`action-button action-button--${kind} ${compact ? 'action-button--compact' : ''} ${labelHidden ? 'action-button--icon' : ''}`}
+      className={`action-button action-button--${kind} ${compact ? 'action-button--compact' : ''} ${labelHidden ? 'action-button--icon' : ''} ${className}`.trim()}
       disabled={disabled}
       onClick={onClick}
       title={labelHidden ? label : undefined}
@@ -1215,6 +1288,24 @@ function ActionButton({
     >
       {!hideIcon && <AppIcon icon={icon} size={16} />}
       {!labelHidden && <span>{label}</span>}
+    </button>
+  );
+}
+
+function ModalButton({
+  kind = 'secondary',
+  label,
+  onClick,
+  disabled = false
+}: {
+  kind?: 'secondary' | 'primary' | 'danger';
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button className={`modal-btn ${kind}`} disabled={disabled} onClick={onClick} type="button">
+      {label}
     </button>
   );
 }
@@ -1432,26 +1523,6 @@ function StatusBadge({ status, copy }: { status: RuntimeState['status']; copy: C
   );
 }
 
-function ServicePilotLogoMark({ size = 40 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="-1 -1 34 35" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-      <path d="M16 0.8L29.86 8.8V24.8L16 32.8L2.14 24.8V8.8L16 0.8Z" stroke="#4F8CFF" strokeWidth="2" />
-      <text
-        x="16"
-        y="21.4"
-        textAnchor="middle"
-        fontFamily="Inter, Arial, Helvetica, sans-serif"
-        fontSize="12"
-        fontWeight="700"
-        fill="#FFFFFF"
-        letterSpacing="0.2"
-      >
-        SP
-      </text>
-    </svg>
-  );
-}
-
 function isWindowDragBlocked(target: EventTarget | null): boolean {
   return (
     target instanceof HTMLElement &&
@@ -1503,23 +1574,18 @@ const VirtualLogList = memo(function VirtualLogList({
   searchQuery,
   activeSearchMatchId,
   autoScroll,
-  onAutoScrollChange,
-  emptyTitle,
-  emptyDesc
+  emptyTitle
 }: {
   items: LogEntry[];
   searchQuery: string;
   activeSearchMatchId: string | undefined;
   autoScroll: boolean;
-  onAutoScrollChange: (value: boolean) => void;
   emptyTitle: string;
-  emptyDesc: string;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [containerHeight, setContainerHeight] = useState(0);
   const [measuredHeights, setMeasuredHeights] = useState<Record<string, number>>({});
-  const userScrolledRef = useRef(false);
   const rowRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   useEffect(() => {
@@ -1577,15 +1643,7 @@ const VirtualLogList = memo(function VirtualLogList({
     const el = containerRef.current;
     if (!el) return;
     setScrollTop(el.scrollTop);
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 30;
-    if (!atBottom) {
-      userScrolledRef.current = true;
-      if (autoScroll) onAutoScrollChange(false);
-    } else {
-      userScrolledRef.current = false;
-      if (!autoScroll) onAutoScrollChange(true);
-    }
-  }, [autoScroll, onAutoScrollChange]);
+  }, []);
 
   // 计算总高度和可见范围
   const { totalHeight, startIndex, endIndex, offsetY } = useMemo(() => {
@@ -1623,6 +1681,14 @@ const VirtualLogList = memo(function VirtualLogList({
 
   const visibleItems = items.slice(startIndex, endIndex + 1);
 
+  if (!items.length) {
+    return (
+      <div className="pilot-terminal__body pilot-terminal__body--empty">
+        <div className="pilot-terminal__empty">{emptyTitle}</div>
+      </div>
+    );
+  }
+
   return (
     <div
       ref={containerRef}
@@ -1654,15 +1720,6 @@ const VirtualLogList = memo(function VirtualLogList({
           })}
         </div>
       </div>
-      {!items.length && (
-        <div className="pilot-terminal__empty">
-          <div className="pilot-terminal__empty-icon">
-            <AppIcon icon="log" size={26} />
-          </div>
-          <div className="pilot-terminal__empty-title">{emptyTitle}</div>
-          <div className="pilot-terminal__empty-desc">{emptyDesc}</div>
-        </div>
-      )}
     </div>
   );
 });
@@ -1690,6 +1747,7 @@ export function App() {
   const [logQuery, setLogQuery] = useState('');
   const [logMatchIndex, setLogMatchIndex] = useState(0);
   const [logLevelFilter, setLogLevelFilter] = useState<LogLevelFilter>('ALL');
+  const [logsExpanded, setLogsExpanded] = useState(true);
   const [autoScroll, setAutoScroll] = useState(true);
   const [activeNav, setActiveNav] = useState<NavKey>('services');
   const [rowMenuServiceId, setRowMenuServiceId] = useState('');
@@ -1714,6 +1772,7 @@ export function App() {
   const [scanSelected, setScanSelected] = useState<Set<string>>(new Set());
   const [scanLoading, setScanLoading] = useState(false);
   const [scanGroupIds, setScanGroupIds] = useState<string[]>([]);
+  const logTabsRef = useRef<HTMLDivElement | null>(null);
 
   const language = snapshot.settings.language;
   const copy = COPY[language];
@@ -1935,7 +1994,7 @@ export function App() {
   }, [activeNav]);
 
   useEffect(() => {
-    if (!selectedLogServiceId || logsByService[selectedLogServiceId]) {
+    if (!logsExpanded || !selectedLogServiceId || logsByService[selectedLogServiceId]) {
       return;
     }
 
@@ -1953,7 +2012,20 @@ export function App() {
           tone: 'error'
         });
       });
-  }, [copy.logLoadFailed, logsByService, selectedLogServiceId]);
+  }, [copy.logLoadFailed, logsByService, logsExpanded, selectedLogServiceId]);
+
+  const selectedLogService = useMemo(
+    () => snapshot.services.find((service) => service.id === selectedLogServiceId),
+    [selectedLogServiceId, snapshot.services]
+  );
+
+  useEffect(() => {
+    if (!logsExpanded || !selectedLogServiceId) {
+      return;
+    }
+    const activeTab = logTabsRef.current?.querySelector<HTMLElement>('.pilot-log-tab--active');
+    activeTab?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }, [logsExpanded, selectedLogServiceId]);
 
   const currentLogEntries = useMemo(() => logsByService[selectedLogServiceId] ?? [], [logsByService, selectedLogServiceId]);
 
@@ -2178,7 +2250,7 @@ export function App() {
         // 没扫描到 Spring Boot 服务，尝试检测前端项目
         const detected = await window.servicePilot.detectProject(projectDir);
 
-        if (detected.serviceKind === 'vue') {
+        if (detected.serviceKind === 'vue' || detected.serviceKind === 'rust') {
           // 是前端项目，直接导入
           await runAction('import-project', async () => {
             const service = await window.servicePilot.importProject(projectDir);
@@ -2347,6 +2419,26 @@ export function App() {
             classpath: '',
             jvmArgsText: '',
             profilesText: '',
+            mavenForceUpdate: false,
+            mavenDebugMode: false,
+            mavenDisableFork: false
+          };
+        }
+
+        if (detected.serviceKind === 'rust') {
+          return {
+            ...current,
+            name: shouldUseDetectedName ? detected.name : current.name,
+            serviceKind: 'rust',
+            launchType: 'cargo-run',
+            workingDir: picked,
+            command: 'cargo',
+            mainClass: '',
+            classpath: '',
+            jvmArgsText: '',
+            profilesText: '',
+            frontendScript: 'dev',
+            url: '',
             mavenForceUpdate: false,
             mavenDebugMode: false,
             mavenDisableFork: false
@@ -2616,7 +2708,7 @@ export function App() {
       >
         <div className="pilot-brand">
           <div className="pilot-brand__mark">
-            <ServicePilotLogoMark size={40} />
+            <img alt="" src={servicePilotLogo} />
           </div>
           <div className="pilot-brand__copy">
             <h1>{copy.appName}</h1>
@@ -3078,7 +3170,7 @@ export function App() {
               </div>
             </section>
           ) : (
-            <section className="pilot-surface pilot-surface--no-gap">
+            <section className={`pilot-surface pilot-surface--no-gap ${logsExpanded ? 'pilot-surface--logs-expanded' : 'pilot-surface--logs-collapsed'}`}>
               <div className="pilot-toolbar">
                 <div className="pilot-toolbar__filters">
                   <DropdownField
@@ -3133,7 +3225,7 @@ export function App() {
                       <span>{copy.batchStop}</span>
                     </button>
                   </div>
-                  <ActionButton compact icon="addService" kind="primary" label={copy.addService} onClick={() => void handleScanImport()} />
+                  <ActionButton compact className="action-button--add-service" icon="addService" kind="primary" label={copy.addService} onClick={() => void handleScanImport()} />
                 </div>
               </div>
 
@@ -3149,12 +3241,11 @@ export function App() {
                     <span className="pilot-table-card__actions-head"></span>
                   </header>
 
-                  {filteredServices.map((service) => {
+                  {filteredServices.map((service, index) => {
                     const runtime = getRuntime(snapshot, service.id);
                     const tone = getStatusTone(runtime.status);
                     const serviceGroups = getServiceGroups(snapshot.groups, service.id);
                     const servicePort = resolveRuntimePort(service, runtime);
-                    const serviceUrl = resolveRuntimeUrl(service, runtime);
 
                     return (
                       <article
@@ -3163,6 +3254,7 @@ export function App() {
                         onClick={() => setSelectedLogServiceId(service.id)}
                       >
                         <div className="service-row__name">
+                          <ServiceTechIcon index={index} service={service} />
                           <span className="service-row__name-text" title={service.name}>{service.name}</span>
                         </div>
 
@@ -3185,20 +3277,7 @@ export function App() {
                         </div>
 
                         <div className="service-row__port">
-                          {serviceUrl ? (
-                            <button
-                              className="service-row__port-link"
-                              onClick={() => {
-                                void runAction(`open-${service.id}`, () => window.servicePilot.openServiceUrl(service.id));
-                              }}
-                              type="button"
-                            >
-                              <span>{servicePort ?? '--'}</span>
-                              {servicePort && <AppIcon icon="external" size={13} />}
-                            </button>
-                          ) : (
-                            <span className="service-row__port-text">{servicePort ?? '--'}</span>
-                          )}
+                          <span className="service-row__port-text">{servicePort ?? '--'}</span>
                         </div>
 
                         <ServiceRuntimeDuration runtime={runtime} />
@@ -3209,7 +3288,9 @@ export function App() {
                             <>
                               <ActionButton
                                 compact
+                                className="service-row__restart-button"
                                 disabled={busyKey !== ''}
+                                iconOnly
                                 icon="restart"
                                 kind="default"
                                 label={copy.restart}
@@ -3218,6 +3299,7 @@ export function App() {
                               <ActionButton
                                 compact
                                 disabled={busyKey !== ''}
+                                iconOnly
                                 icon="stop"
                                 kind="danger"
                                 label={copy.stop}
@@ -3230,8 +3312,9 @@ export function App() {
                             <ActionButton
                               compact
                               disabled={busyKey !== ''}
+                              iconOnly
                               icon="start"
-                              kind="primary"
+                              kind="success"
                               label={copy.start}
                               onClick={() => {
                                 void runAction(`start-${service.id}`, async () => {
@@ -3243,15 +3326,16 @@ export function App() {
                           )}
                           <div className="service-row__menu-wrap">
                             <button
-                              className="action-button action-button--default action-button--compact"
+                              aria-label={copy.more}
+                              className="action-button action-button--default action-button--compact action-button--icon service-row__more-button"
                               onClick={(event) => {
                                 event.stopPropagation();
                                 setRowMenuServiceId((current) => (current === service.id ? '' : service.id));
                               }}
+                              title={copy.more}
                               type="button"
                             >
                               <AppIcon icon="more" size={16} />
-                              <span>{copy.more}</span>
                             </button>
                             {rowMenuServiceId === service.id && (
                                   <div className="floating-menu floating-menu--row" onClick={(event) => event.stopPropagation()}>
@@ -3273,11 +3357,12 @@ export function App() {
                                       }}
                                       type="button"
                                     >
-                                      {groupUi.manageMembership}
+                                      {language === 'zh-CN' ? '分组' : 'Groups'}
                                     </button>
                                     <button
                                       className="floating-menu__item floating-menu__item--danger"
-                                      onClick={() => {
+                                      onClick={(event) => {
+                                        event.stopPropagation();
                                         setRowMenuServiceId('');
                                         setDeleteServiceTarget(service);
                                       }}
@@ -3298,6 +3383,7 @@ export function App() {
                       <div>{copy.noServices}</div>
                       <ActionButton
                         compact
+                        className="action-button--add-service"
                         disabled={busyKey !== ''}
                         icon="addService"
                         kind="primary"
@@ -3309,8 +3395,33 @@ export function App() {
                 </div>
               </section>
 
-              <section className="pilot-logs-card">
-                <div className="pilot-log-tabs">
+              <section className={`pilot-logs-card ${logsExpanded ? 'pilot-logs-card--expanded' : 'pilot-logs-card--collapsed'}`}>
+                {!logsExpanded ? (
+                  <button className="pilot-logs-collapsed" onClick={() => setLogsExpanded(true)} type="button">
+                    <span className="pilot-logs-collapsed__main">
+                      <AppIcon icon="log" size={15} />
+                      <span>{copy.serviceLogs}</span>
+                      {selectedLogService && <span className="pilot-logs-collapsed__service">{selectedLogService.name}</span>}
+                    </span>
+                    <span className="pilot-logs-collapsed__meta">
+                      {language === 'zh-CN' ? '展开' : 'Open'}
+                      <AppIcon icon="chevronDown" size={14} />
+                    </span>
+                  </button>
+                ) : (
+                  <>
+                <div className="pilot-log-tabs-wrapper">
+                <div
+                  ref={logTabsRef}
+                  className="pilot-log-tabs"
+                  onWheel={(event) => {
+                    if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) {
+                      return;
+                    }
+                    event.currentTarget.scrollLeft += event.deltaY;
+                    event.preventDefault();
+                  }}
+                >
                   {snapshot.services.map((service) => {
                     const tone = getStatusTone(getRuntime(snapshot, service.id).status);
                     const active = selectedLogServiceId === service.id;
@@ -3326,6 +3437,17 @@ export function App() {
                       </button>
                     );
                   })}
+                </div>
+                <div className="pilot-log-tabs-more">
+                  <button
+                    aria-label={language === 'zh-CN' ? '收起日志' : 'Collapse logs'}
+                    className="pilot-log-tabs__collapse"
+                    onClick={() => setLogsExpanded(false)}
+                    type="button"
+                  >
+                    <AppIcon icon="chevronDown" size={14} />
+                  </button>
+                </div>
                 </div>
 
                 <header className="pilot-logs-card__header">
@@ -3398,7 +3520,7 @@ export function App() {
                         <span>{copy.autoScroll}</span>
                       </label>
 
-                      <ActionButton compact icon="clearLogs" kind="default" label={copy.clearLogs} onClick={() => setLogsByService((current) => ({ ...current, [selectedLogServiceId]: [] }))} />
+                      <ActionButton compact className="pilot-log-clear-button" icon="clearLogs" kind="default" label={copy.clearLogs} onClick={() => setLogsByService((current) => ({ ...current, [selectedLogServiceId]: [] }))} />
                     </div>
                   </div>
                 </header>
@@ -3411,12 +3533,12 @@ export function App() {
                       searchQuery={deferredLogQuery}
                       activeSearchMatchId={activeLogMatchEntryId}
                       autoScroll={autoScroll}
-                      onAutoScrollChange={setAutoScroll}
                       emptyTitle={hasLogQuery ? (language === 'zh-CN' ? '未找到匹配内容' : 'No matches') : copy.noLogs}
-                      emptyDesc={hasLogQuery ? logQuery.trim() : copy.noLogsDesc}
                     />
                   </div>
                 </div>
+                  </>
+                )}
               </section>
             </section>
           )}
@@ -3424,20 +3546,21 @@ export function App() {
       </div>
 
       {serviceForm && (
-        <div className="modal-backdrop">
-          <div className="modal modal--service">
-            <div className="modal__header">
+        <div className="modal-overlay">
+          <div className="modal">
+            <div className="modal-header">
               <div>
-                <h3>{serviceForm.id ? copy.updateService : copy.createService}</h3>
-                <p>{copy.serviceModalDesc}</p>
+                <div className="modal-title">{serviceForm.id ? copy.updateService : copy.createService}</div>
+                <div className="modal-desc">{copy.serviceModalDesc}</div>
               </div>
-              <button className="modal__close" onClick={() => setServiceForm(null)} type="button">
-                <AppIcon icon="close" size={16} />
+              <button className="modal-close" aria-label={copy.cancel} onClick={() => setServiceForm(null)} type="button">
+                ×
               </button>
             </div>
 
-            <div className="form-grid">
-              <div className="field field--full">
+            <div className="modal-body">
+              <div className="form-grid">
+                <div className="field field--full">
                 <span>{copy.workingDirectory}</span>
                 <div className="field-row field-row--project">
                   <input value={serviceForm.workingDir} placeholder={copy.workingDirPlaceholder} readOnly />
@@ -3571,47 +3694,50 @@ export function App() {
                   </label>
 
                 </div>
-              </details>
+                </details>
+              </div>
             </div>
 
-            <div className="modal__footer">
-              <ActionButton compact icon="close" kind="default" label={copy.cancel} onClick={() => setServiceForm(null)} />
-              <ActionButton compact icon="addService" kind="primary" label={copy.saveService} onClick={() => void handleSaveService()} />
+            <div className="modal-footer">
+              <ModalButton label={copy.cancel} onClick={() => setServiceForm(null)} />
+              <ModalButton kind="primary" label={copy.saveService} onClick={() => void handleSaveService()} />
             </div>
           </div>
         </div>
       )}
 
       {deleteServiceTarget && (
-        <div className="modal-backdrop">
-          <div className="modal modal--narrow modal--confirm">
-            <div className="modal__header">
+        <div className="modal-overlay">
+          <div className="modal confirm">
+            <div className="modal-header">
               <div>
-                <h3>{copy.delete}</h3>
-                <p>{copy.deleteConfirm(deleteServiceTarget.name)}</p>
+                <div className="modal-title">{copy.delete}</div>
+                <div className="modal-desc">{copy.deleteConfirm(deleteServiceTarget.name)}</div>
               </div>
-              <button className="modal__close" onClick={() => setDeleteServiceTarget(null)} type="button">
-                <AppIcon icon="close" size={16} />
+              <button className="modal-close" aria-label={copy.cancel} onClick={() => setDeleteServiceTarget(null)} type="button">
+                ×
               </button>
             </div>
 
-            <div className="modal-confirm__body">
-              <div className="modal-confirm__service">{deleteServiceTarget.name}</div>
-              <div className="modal-confirm__path">{deleteServiceTarget.workingDir}</div>
+            <div className="modal-body">
+              <div className="modal-confirm__body">
+                <div className="modal-confirm__service">{deleteServiceTarget.name}</div>
+                <div className="modal-confirm__path">{deleteServiceTarget.workingDir}</div>
+              </div>
             </div>
 
-            <div className="modal__footer">
-              <ActionButton compact icon="close" kind="default" label={copy.cancel} onClick={() => setDeleteServiceTarget(null)} />
-              <ActionButton
-                compact
-                disabled={busyKey !== ''}
-                icon="delete"
+            <div className="modal-footer">
+              <ModalButton label={copy.cancel} onClick={() => setDeleteServiceTarget(null)} />
+              <ModalButton
+                disabled={busyKey === `delete-${deleteServiceTarget.id}`}
                 kind="danger"
                 label={copy.delete}
                 onClick={() => {
                   const target = deleteServiceTarget;
+                  setDeleteServiceTarget(null);
                   void runAction(`delete-${target.id}`, async () => {
                     await window.servicePilot.deleteService(target.id);
+                    await refreshSnapshot();
                     // 清理已删除服务的日志缓存，释放内存
                     setLogsByService((current) => {
                       if (!current[target.id]) {
@@ -3621,7 +3747,6 @@ export function App() {
                       delete next[target.id];
                       return next;
                     });
-                    setDeleteServiceTarget(null);
                     if (selectedLogServiceId === target.id) {
                       setSelectedLogServiceId('');
                     }
@@ -3634,25 +3759,25 @@ export function App() {
       )}
 
       {scanModalOpen && (
-        <div className="modal-backdrop">
-          <div className="modal modal--scan">
-            <div className="modal__header">
+        <div className="modal-overlay">
+          <div className="modal large">
+            <div className="modal-header">
               <div>
-                <h3>{copy.scanImport}</h3>
-                {scanLoading ? (
-                  <p>{copy.scanningServices}</p>
-                ) : scanResults.length > 0 ? (
-                  <p>{copy.detectedServices(scanResults.length)}</p>
-                ) : (
-                  <p>{copy.noServicesDetected}</p>
-                )}
+                <div className="modal-title">{copy.scanImport}</div>
+                <div className="modal-desc">
+                  {scanLoading
+                    ? copy.scanningServices
+                    : scanResults.length > 0
+                      ? copy.detectedServices(scanResults.length)
+                      : copy.noServicesDetected}
+                </div>
               </div>
-              <button className="modal__close" onClick={() => { setScanModalOpen(false); setScanResults([]); setScanSelected(new Set()); setScanGroupIds([]); }} type="button">
-                <AppIcon icon="close" size={16} />
+              <button className="modal-close" aria-label={copy.cancel} onClick={() => { setScanModalOpen(false); setScanResults([]); setScanSelected(new Set()); setScanGroupIds([]); }} type="button">
+                ×
               </button>
             </div>
 
-            <div className="modal__body modal__body--scan">
+            <div className="modal-body modal-body--scan">
               {scanLoading ? (
                 <div className="pilot-loading">
                   <div className="pilot-loading__spinner" />
@@ -3715,13 +3840,11 @@ export function App() {
               )}
             </div>
 
-            <div className="modal__footer">
-              <ActionButton compact icon="close" kind="default" label={copy.cancel} onClick={() => { setScanModalOpen(false); setScanResults([]); setScanSelected(new Set()); setScanGroupIds([]); }} />
+            <div className="modal-footer">
+              <ModalButton label={copy.cancel} onClick={() => { setScanModalOpen(false); setScanResults([]); setScanSelected(new Set()); setScanGroupIds([]); }} />
               {scanResults.length > 0 && (
-                <ActionButton
-                  compact
+                <ModalButton
                   disabled={busyKey !== '' || scanSelected.size === 0}
-                  icon="addService"
                   kind="primary"
                   label={`${copy.importSelected} (${scanSelected.size})`}
                   onClick={() => void handleBatchImportSelected()}
@@ -3733,16 +3856,20 @@ export function App() {
       )}
 
       {exitConfirmOpen && (
-        <div className="modal-backdrop">
-          <div className="modal modal--exit">
-            <div className="modal__header">
-              <p>{copy.quitConfirm}</p>
+        <div className="modal-overlay">
+          <div className="modal confirm">
+            <div className="modal-header">
+              <div>
+                <div className="modal-title">{language === 'zh-CN' ? '确认退出' : 'Confirm Exit'}</div>
+                <div className="modal-desc">{copy.quitConfirm}</div>
+              </div>
+              <button className="modal-close" aria-label={copy.cancel} onClick={() => setExitConfirmOpen(false)} type="button">
+                ×
+              </button>
             </div>
-            <div className="modal__footer">
-              <ActionButton compact icon="close" kind="default" label={copy.cancel} onClick={() => setExitConfirmOpen(false)} />
-              <ActionButton
-                compact
-                icon="stop"
+            <div className="modal-footer">
+              <ModalButton label={copy.cancel} onClick={() => setExitConfirmOpen(false)} />
+              <ModalButton
                 kind="danger"
                 label={language === 'zh-CN' ? '退出' : 'Exit'}
                 onClick={() => void window.servicePilot.exitApp()}
@@ -3753,16 +3880,27 @@ export function App() {
       )}
 
       {updateConfirmOpen && updateInfo && (
-        <div className="modal-backdrop">
-          <div className="modal modal--exit">
-            <div className="modal__header">
-              <p>{copy.updateInstallConfirm(updateInfo.version)}</p>
+        <div className="modal-overlay">
+          <div className="modal confirm modal-update">
+            <div className="modal-header">
+              <div>
+                <div className="modal-title">{copy.installUpdate}</div>
+                <div className="modal-desc">{copy.updateInstallConfirm(updateInfo.version)}</div>
+              </div>
+              <button className="modal-close" aria-label={copy.cancel} onClick={() => setUpdateConfirmOpen(false)} type="button">
+                ×
+              </button>
             </div>
-            <div className="modal__footer">
-              <ActionButton compact icon="close" kind="default" label={copy.cancel} onClick={() => setUpdateConfirmOpen(false)} />
-              <ActionButton
-                compact
-                icon="arrowUp"
+            {updateInfo.notes?.trim() && (
+              <div className="modal-body">
+                <div className="update-notes" aria-label="Release notes">
+                  <pre>{updateInfo.notes.trim()}</pre>
+                </div>
+              </div>
+            )}
+            <div className="modal-footer">
+              <ModalButton label={copy.cancel} onClick={() => setUpdateConfirmOpen(false)} />
+              <ModalButton
                 kind="primary"
                 label={copy.installUpdate}
                 onClick={() => void confirmInstallUpdate()}
@@ -3773,51 +3911,51 @@ export function App() {
       )}
 
       {groupForm && (
-        <div className="modal-backdrop">
-          <div className="modal modal--narrow">
-            <div className="modal__header">
+        <div className="modal-overlay">
+          <div className="modal">
+            <div className="modal-header">
               <div>
-                <h3>{groupForm.id ? copy.updateGroup : copy.createGroup}</h3>
-                <p>{copy.groupModalDesc}</p>
+                <div className="modal-title">{groupForm.id ? copy.updateGroup : copy.createGroup}</div>
+                <div className="modal-desc">{copy.groupModalDesc}</div>
               </div>
-              <button className="modal__close" onClick={() => setGroupForm(null)} type="button">
-                <AppIcon icon="close" size={16} />
+              <button className="modal-close" aria-label={copy.cancel} onClick={() => setGroupForm(null)} type="button">
+                ×
               </button>
             </div>
 
-            <div className="form-grid">
-              <label className="field field--full">
-                <span>{copy.groupName}</span>
-                <input value={groupForm.name} onChange={(event) => setGroupForm({ ...groupForm, name: event.target.value })} />
-              </label>
+            <div className="modal-body">
+              <div className="form-grid">
+                <label className="field field--full">
+                  <span>{copy.groupName}</span>
+                  <input value={groupForm.name} onChange={(event) => setGroupForm({ ...groupForm, name: event.target.value })} />
+                </label>
 
-              <div className="field field--full">
-                <span>{copy.groupServices}</span>
-                <div className="check-grid">
-                  {snapshot.services.map((service) => (
-                    <label className="check-row" key={service.id}>
-                      <input
-                        type="checkbox"
-                        checked={groupForm.serviceIds.includes(service.id)}
-                        onChange={(event) => {
-                          setGroupForm({
-                            ...groupForm,
-                            serviceIds: toggleValue(groupForm.serviceIds, service.id, event.target.checked)
-                          });
-                        }}
-                      />
-                      <span>{service.name}</span>
-                    </label>
-                  ))}
+                <div className="field field--full">
+                  <span>{copy.groupServices}</span>
+                  <div className="check-grid">
+                    {snapshot.services.map((service) => (
+                      <label className="check-row" key={service.id}>
+                        <input
+                          type="checkbox"
+                          checked={groupForm.serviceIds.includes(service.id)}
+                          onChange={(event) => {
+                            setGroupForm({
+                              ...groupForm,
+                              serviceIds: toggleValue(groupForm.serviceIds, service.id, event.target.checked)
+                            });
+                          }}
+                        />
+                        <span>{service.name}</span>
+                      </label>
+                    ))}
+                  </div>
                 </div>
               </div>
             </div>
 
-            <div className="modal__footer">
+            <div className="modal-footer modal-footer--split">
               {groupForm.id && (
-                <ActionButton
-                  compact
-                  icon="delete"
+                <ModalButton
                   kind="danger"
                   label={copy.deleteGroup}
                   onClick={() => {
@@ -3834,28 +3972,28 @@ export function App() {
                   }}
                 />
               )}
-              <div className="modal__spacer" />
-              <ActionButton compact icon="close" kind="default" label={copy.cancel} onClick={() => setGroupForm(null)} />
-              <ActionButton compact icon="addService" kind="primary" label={copy.saveGroup} onClick={() => void handleSaveGroup()} />
+              <ModalButton label={copy.cancel} onClick={() => setGroupForm(null)} />
+              <ModalButton kind="primary" label={copy.saveGroup} onClick={() => void handleSaveGroup()} />
             </div>
           </div>
         </div>
       )}
 
       {serviceGroupForm && (
-        <div className="modal-backdrop">
-          <div className="modal modal--membership">
-            <div className="modal__header modal__header--membership">
+        <div className="modal-overlay">
+          <div className="modal large">
+            <div className="modal-header">
               <div>
-                <h3>{groupUi.manageMembership}</h3>
-                <p>{groupUi.membershipDesc}</p>
+                <div className="modal-title">{groupUi.manageMembership}</div>
+                <div className="modal-desc">{groupUi.membershipDesc}</div>
               </div>
-              <button className="modal__close" onClick={() => setServiceGroupForm(null)} type="button">
-                <AppIcon icon="close" size={16} />
+              <button className="modal-close" aria-label={copy.cancel} onClick={() => setServiceGroupForm(null)} type="button">
+                ×
               </button>
             </div>
 
-            <div className="membership-panel">
+            <div className="modal-body">
+              <div className="membership-panel">
               <div className="membership-context">
                 <AppIcon icon="menuGroup" size={16} />
                 <span>{language === 'zh-CN' ? '为' : 'Set groups for'}</span>
@@ -3944,11 +4082,12 @@ export function App() {
                   )}
                 </div>
               </div>
+              </div>
             </div>
 
-            <div className="modal__footer modal__footer--membership">
-              <ActionButton compact hideIcon icon="close" kind="default" label={copy.cancel} onClick={() => setServiceGroupForm(null)} />
-              <ActionButton compact icon="menuGroup" kind="primary" label={groupUi.saveMembership} onClick={() => void handleSaveServiceGroups()} />
+            <div className="modal-footer">
+              <ModalButton label={copy.cancel} onClick={() => setServiceGroupForm(null)} />
+              <ModalButton kind="primary" label={groupUi.saveMembership} onClick={() => void handleSaveServiceGroups()} />
             </div>
           </div>
         </div>

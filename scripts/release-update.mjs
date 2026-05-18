@@ -2,12 +2,15 @@ import { access, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { readOptionValue } from './release-notes.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const repository = 'lyy1010e/ServicePilot';
-const args = new Set(process.argv.slice(2));
+const rawArgs = process.argv.slice(2);
+const args = new Set(rawArgs);
 const dryRun = args.has('--dry-run');
 const skipBuild = args.has('--skip-build');
+const notesFile = readOptionValue(rawArgs, '--notes-file');
 
 if (args.has('--help') || args.has('-h')) {
   printHelp();
@@ -28,6 +31,7 @@ const artifacts = [
   path.join(artifactDir, `${artifactName}.sig`),
   path.join(artifactDir, 'latest.json')
 ];
+const releaseNotesArtifact = path.join(artifactDir, 'release-notes.md');
 const releaseTarget = await output('git', ['rev-parse', 'HEAD']);
 
 assertVersionSync(version, packageJson.version, cargoToml);
@@ -49,9 +53,9 @@ if (!skipBuild) {
   await run('npm', ['run', 'build']);
 }
 
-await run('npm', ['run', 'release:manifest']);
+await run('npm', ['run', 'release:manifest', ...(notesFile ? ['--', '--notes-file', notesFile] : [])]);
 if (!dryRun) {
-  for (const artifact of artifacts) {
+  for (const artifact of [...artifacts, releaseNotesArtifact]) {
     await access(artifact);
   }
 }
@@ -61,8 +65,10 @@ await run('gh', ['auth', 'status']);
 if (dryRun) {
   console.log(`[dry-run] gh release view ${tag} --repo ${repository}`);
   console.log(`[dry-run] If ${tag} exists: gh release upload ${tag} ${artifacts.join(' ')} --repo ${repository} --clobber`);
-  console.log(`[dry-run] If ${tag} does not exist: gh release create ${tag} ${artifacts.join(' ')} --repo ${repository} --target ${releaseTarget} --title "ServicePilot ${version}" --notes "ServicePilot ${version}"`);
+  console.log(`[dry-run] If ${tag} exists: gh release edit ${tag} --repo ${repository} --notes-file ${releaseNotesArtifact}`);
+  console.log(`[dry-run] If ${tag} does not exist: gh release create ${tag} ${artifacts.join(' ')} --repo ${repository} --target ${releaseTarget} --title "ServicePilot ${version}" --notes-file ${releaseNotesArtifact}`);
 } else if (await commandSucceeds('gh', ['release', 'view', tag, '--repo', repository])) {
+  await run('gh', ['release', 'edit', tag, '--repo', repository, '--notes-file', releaseNotesArtifact]);
   await run('gh', ['release', 'upload', tag, ...artifacts, '--repo', repository, '--clobber']);
 } else {
   await run('gh', [
@@ -76,8 +82,8 @@ if (dryRun) {
     releaseTarget,
     '--title',
     `ServicePilot ${version}`,
-    '--notes',
-    `ServicePilot ${version}`
+    '--notes-file',
+    releaseNotesArtifact
   ]);
 }
 
@@ -242,6 +248,7 @@ Requirements:
   - TAURI_SIGNING_PRIVATE_KEY set in the shell or .env.release.local when building artifacts
 
 Options:
-  --dry-run     Print commands without running them
-  --skip-build  Reuse existing bundle artifacts and only regenerate/upload`);
+  --dry-run              Print commands without running them
+  --skip-build           Reuse existing bundle artifacts and only regenerate/upload
+  --notes-file <path>    Use a specific Markdown release notes file`);
 }

@@ -1,6 +1,6 @@
-export type ServiceKind = 'spring' | 'vue';
+export type ServiceKind = 'spring' | 'vue' | 'rust';
 
-export type LaunchType = 'custom' | 'maven' | 'java-main' | 'vue-preset';
+export type LaunchType = 'custom' | 'maven' | 'java-main' | 'vue-preset' | 'cargo-run';
 
 export type AppLanguage = 'zh-CN' | 'en-US';
 
@@ -26,6 +26,7 @@ export interface ServiceConfig {
   id: string;
   name: string;
   serviceKind: ServiceKind;
+  framework?: string;
   launchType: LaunchType;
   workingDir: string;
   command: string;
@@ -99,6 +100,7 @@ export interface SaveServiceInput extends Omit<ServiceConfig, 'id'> {
 export interface ProjectDetection {
   name: string;
   serviceKind: ServiceKind;
+  framework?: string;
   launchType: LaunchType;
   command: string;
   frontendScript?: string;
@@ -118,6 +120,7 @@ export interface SaveGroupInput extends Omit<ServiceGroup, 'id'> {
 export interface ScannedService {
   name: string;
   workingDir: string;
+  framework?: string;
   port?: number;
 }
 
@@ -145,7 +148,6 @@ export interface ServicePilotApi {
   detectProject: (projectDir: string) => Promise<ProjectDetection>;
   importIdeaMavenConfig: (projectDir: string) => Promise<AppSettings>;
   importProject: (projectDir: string) => Promise<ServiceConfig>;
-  quickStartProject: (projectDir: string) => Promise<ServiceConfig>;
   importIdeaProject: (projectDir: string) => Promise<ServiceConfig>;
   importState: () => Promise<void>;
   exportState: () => Promise<void>;

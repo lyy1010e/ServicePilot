@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Tauri">
+  <circle cx="128" cy="128" r="112" fill="#FFC131"/>
+  <circle cx="128" cy="128" r="72" fill="#24C8DB"/>
+  <circle cx="128" cy="128" r="38" fill="#fff"/>
+  <path fill="#FFC131" d="M128 30a98 98 0 0 1 98 98h-30a68 68 0 0 0-68-68Z"/>
+  <path fill="#24C8DB" d="M128 226a98 98 0 0 1-98-98h30a68 68 0 0 0 68 68Z"/>
+</svg>
