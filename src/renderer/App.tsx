@@ -1,4 +1,4 @@
-import { memo, startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { memo, startTransition, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import type {
   AppSettings,
   AppLanguage,
@@ -1568,6 +1568,7 @@ function renderLogSearchHighlight(text: string, query: string, active: boolean) 
 
 const ITEM_HEIGHT_ESTIMATE = 22;
 const OVERSCAN = 10;
+const LOG_BOTTOM_TOLERANCE = 32;
 
 const VirtualLogList = memo(function VirtualLogList({
   items,
@@ -1583,6 +1584,8 @@ const VirtualLogList = memo(function VirtualLogList({
   emptyTitle: string;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const programmaticScrollRef = useRef(false);
+  const followTailRef = useRef(true);
   const [scrollTop, setScrollTop] = useState(0);
   const [containerHeight, setContainerHeight] = useState(0);
   const [measuredHeights, setMeasuredHeights] = useState<Record<string, number>>({});
@@ -1611,21 +1614,6 @@ const VirtualLogList = memo(function VirtualLogList({
     }
   }, []);
 
-  // 自动滚动到底部
-  useEffect(() => {
-    if (!autoScroll || !containerRef.current) return;
-    const el = containerRef.current;
-    el.scrollTop = el.scrollHeight;
-    const frame = requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
-    return () => cancelAnimationFrame(frame);
-  }, [autoScroll, items.length]);
-
-  // 容器大小变化时，如果在底部则保持底部
-  useEffect(() => {
-    if (!autoScroll || !containerRef.current) return;
-    containerRef.current.scrollTop = containerRef.current.scrollHeight;
-  }, [containerHeight, autoScroll]);
-
   // 搜索跳转
   useEffect(() => {
     if (!activeSearchMatchId || !containerRef.current) return;
@@ -1643,7 +1631,10 @@ const VirtualLogList = memo(function VirtualLogList({
     const el = containerRef.current;
     if (!el) return;
     setScrollTop(el.scrollTop);
-  }, []);
+    if (!autoScroll || programmaticScrollRef.current) return;
+    const distanceFromBottom = el.scrollHeight - el.clientHeight - el.scrollTop;
+    followTailRef.current = distanceFromBottom <= LOG_BOTTOM_TOLERANCE;
+  }, [autoScroll]);
 
   // 计算总高度和可见范围
   const { totalHeight, startIndex, endIndex, offsetY } = useMemo(() => {
@@ -1680,6 +1671,27 @@ const VirtualLogList = memo(function VirtualLogList({
   }, [items, scrollTop, containerHeight, measuredHeights]);
 
   const visibleItems = items.slice(startIndex, endIndex + 1);
+
+  const scrollToBottom = useCallback(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    programmaticScrollRef.current = true;
+    el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
+    requestAnimationFrame(() => {
+      programmaticScrollRef.current = false;
+    });
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!autoScroll) {
+      followTailRef.current = true;
+      return;
+    }
+    if (!followTailRef.current) return;
+    scrollToBottom();
+    const frame = requestAnimationFrame(scrollToBottom);
+    return () => cancelAnimationFrame(frame);
+  }, [autoScroll, containerHeight, items.length, scrollToBottom, totalHeight]);
 
   if (!items.length) {
     return (
@@ -2852,7 +2864,7 @@ export function App() {
                   <h2>{groupUi.overviewTitle}</h2>
                   <p>{groupUi.overviewDesc}</p>
                 </div>
-                <ActionButton compact icon="addService" kind="primary" label={groupUi.newGroup} onClick={() => setGroupForm(buildGroupForm())} />
+                <ActionButton compact className="action-button--add-service" icon="addService" kind="primary" label={groupUi.newGroup} onClick={() => setGroupForm(buildGroupForm())} />
               </section>
 
               <section className="pilot-group-layout">
@@ -2971,7 +2983,7 @@ export function App() {
                     ) : (
                       <div className="pilot-empty-state pilot-empty-state--compact">
                         <div>{groupUi.noGroups}</div>
-                        <ActionButton compact icon="addService" kind="primary" label={groupUi.newGroup} onClick={() => setGroupForm(buildGroupForm())} />
+                        <ActionButton compact className="action-button--add-service" icon="addService" kind="primary" label={groupUi.newGroup} onClick={() => setGroupForm(buildGroupForm())} />
                       </div>
                     )}
                   </div>
@@ -3006,7 +3018,6 @@ export function App() {
                           <article className="pilot-group-service" key={service.id}>
                             <div className="pilot-group-service__main">
                               <strong>{service.name}</strong>
-                              <span>{getLaunchCommandPreview(service)}</span>
                             </div>
 
                             <div className="pilot-group-service__meta">
@@ -3034,23 +3045,6 @@ export function App() {
                                 kind="default"
                                 label={groupUi.manageMembership}
                                 onClick={() => handleOpenServiceGroups(service.id)}
-                              />
-                              <ActionButton
-                                compact
-                                disabled={busyKey !== ''}
-                                icon={runtime.status === 'running' ? 'stop' : 'start'}
-                                kind={runtime.status === 'running' ? 'danger' : 'primary'}
-                                label={runtime.status === 'running' ? copy.stop : copy.start}
-                                onClick={() => {
-                                  const action =
-                                    runtime.status === 'running'
-                                      ? () => window.servicePilot.stopService(service.id)
-                                      : async () => {
-                                          clearServiceLogsForLaunch([service.id]);
-                                          await window.servicePilot.startService(service.id);
-                                        };
-                                  void runAction(`toggle-group-service-${service.id}`, action);
-                                }}
                               />
                             </div>
                           </article>
@@ -3996,9 +3990,10 @@ export function App() {
               <div className="membership-panel">
               <div className="membership-context">
                 <AppIcon icon="menuGroup" size={16} />
-                <span>{language === 'zh-CN' ? '为' : 'Set groups for'}</span>
-                <strong>{snapshot.services.find((service) => service.id === serviceGroupForm.serviceId)?.name ?? '--'}</strong>
-                {language === 'zh-CN' && <span>设置分组</span>}
+                <div className="membership-context__copy">
+                  <strong>{snapshot.services.find((service) => service.id === serviceGroupForm.serviceId)?.name ?? '--'}</strong>
+                  <span>{language === 'zh-CN' ? '设置所属分组' : 'Set group membership'}</span>
+                </div>
               </div>
 
               <div className="membership-toolbar">
@@ -4057,35 +4052,25 @@ export function App() {
               </div>
 
               <div className="membership-selected">
-                <span>{language === 'zh-CN' ? '已选：' : 'Selected:'}</span>
-                <div className="membership-tags">
-                  {snapshot.groups
+                <span
+                  title={snapshot.groups
                     .filter((group) => serviceGroupForm.groupIds.includes(group.id))
-                    .map((group) => (
-                      <button
-                        className="membership-tag"
-                        key={group.id}
-                        onClick={() =>
-                          setServiceGroupForm({
-                            ...serviceGroupForm,
-                            groupIds: serviceGroupForm.groupIds.filter((groupId) => groupId !== group.id)
-                          })
-                        }
-                        type="button"
-                      >
-                        <span>{group.name}</span>
-                        <AppIcon icon="close" size={14} />
-                      </button>
-                    ))}
-                  {!serviceGroupForm.groupIds.length && (
-                    <span className="membership-tags__empty">{language === 'zh-CN' ? '未选择' : 'None'}</span>
-                  )}
-                </div>
+                    .map((group) => group.name)
+                    .join(', ')}
+                >
+                  {serviceGroupForm.groupIds.length
+                    ? language === 'zh-CN'
+                      ? `已选择 ${serviceGroupForm.groupIds.length} 个分组`
+                      : `${serviceGroupForm.groupIds.length} ${serviceGroupForm.groupIds.length === 1 ? 'group' : 'groups'} selected`
+                    : language === 'zh-CN'
+                      ? '未选择分组'
+                      : 'No groups selected'}
+                </span>
               </div>
               </div>
             </div>
 
-            <div className="modal-footer">
+            <div className="modal-footer modal-footer--membership">
               <ModalButton label={copy.cancel} onClick={() => setServiceGroupForm(null)} />
               <ModalButton kind="primary" label={groupUi.saveMembership} onClick={() => void handleSaveServiceGroups()} />
             </div>

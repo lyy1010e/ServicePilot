@@ -1,24 +1,24 @@
-import { access, readFile, writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
+import { ensureVersionReleaseNotes } from './release-notes.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const version = process.argv[2];
-const releaseNotesPath = path.join(root, 'docs', 'releases', `v${version}.md`);
 
 if (!version) {
-  console.error('用法: node scripts/release.mjs <版本号>');
-  console.error('例如: node scripts/release.mjs 1.0.4');
+  console.error('Usage: node scripts/release.mjs <version>');
+  console.error('Example: node scripts/release.mjs 1.0.4');
   process.exit(1);
 }
 
 if (!/^\d+\.\d+\.\d+$/.test(version)) {
-  console.error(`版本号格式错误: ${version}，应为 x.y.z`);
+  console.error(`Invalid version: ${version}. Expected x.y.z.`);
   process.exit(1);
 }
 
-console.log(`==> 更新版本号到 ${version}`);
+console.log(`==> Updating version to ${version}`);
 
 await updateJson(path.join(root, 'package.json'), (json) => {
   json.version = version;
@@ -32,22 +32,26 @@ await updateJson(path.join(root, 'src-tauri', 'tauri.conf.json'), (json) => {
   return json;
 });
 
-console.log('==> 提交并推送');
-const filesToCommit = ['package.json', 'src-tauri/Cargo.toml', 'src-tauri/tauri.conf.json'];
-if (await fileExists(releaseNotesPath)) {
-  filesToCommit.push(path.relative(root, releaseNotesPath));
-}
+const releaseNotes = await ensureVersionReleaseNotes(root, version);
+console.log(
+  releaseNotes.generated
+    ? `==> Generated ${releaseNotes.source}`
+    : `==> Using ${releaseNotes.source}`
+);
+
+console.log('==> Committing and pushing');
+const filesToCommit = ['package.json', 'src-tauri/Cargo.toml', 'src-tauri/tauri.conf.json', releaseNotes.source];
 await run('git', ['add', ...filesToCommit]);
 await run('git', ['commit', '-m', `release: v${version}`]);
 await run('git', ['push', 'origin', 'master']);
 
-console.log('==> 打 tag 触发自动发布');
+console.log('==> Creating tag to trigger release workflow');
 await run('git', ['tag', `v${version}`]);
 await run('git', ['push', 'origin', `v${version}`]);
 
 console.log('');
-console.log(`Done! v${version} 已推送，GitHub Actions 正在构建发布。`);
-console.log('查看进度: https://github.com/lyy1010e/ServicePilot/actions');
+console.log(`Done! v${version} was pushed and GitHub Actions is building the release.`);
+console.log('Progress: https://github.com/lyy1010e/ServicePilot/actions');
 
 async function updateJson(filePath, transform) {
   const content = JSON.parse(await readFile(filePath, 'utf8'));
@@ -59,18 +63,6 @@ async function updateCargoVersion(filePath, ver) {
   let content = await readFile(filePath, 'utf8');
   content = content.replace(/^version = "[^"]*"/m, `version = "${ver}"`);
   await writeFile(filePath, content, 'utf8');
-}
-
-async function fileExists(filePath) {
-  try {
-    await access(filePath);
-    return true;
-  } catch (error) {
-    if (error?.code === 'ENOENT') {
-      return false;
-    }
-    throw error;
-  }
 }
 
 async function run(cmd, args) {

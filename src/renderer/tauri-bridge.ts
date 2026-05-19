@@ -32,13 +32,19 @@ function wrapListener<T>(event: string, listener: (payload: T) => void): () => v
   let disposed = false;
   let unlisten: (() => void) | null = null;
 
-  void listen<T>(event, listener).then((handler) => {
-    if (disposed) {
-      handler();
-      return;
-    }
-    unlisten = handler;
-  });
+  void listen<T>(event, listener)
+    .then((handler) => {
+      if (disposed) {
+        handler();
+        return;
+      }
+      unlisten = handler;
+    })
+    .catch((error: unknown) => {
+      if (!disposed) {
+        console.warn(extractErrorMessage(error, `Tauri event "${event}" listener is not available.`));
+      }
+    });
 
   return () => {
     disposed = true;
