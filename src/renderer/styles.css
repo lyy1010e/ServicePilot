@@ -2638,10 +2638,7 @@ textarea {
 }
 
 .pilot-terminal__row {
-  display: grid;
-  grid-template-columns: 100px 56px minmax(0, 1fr);
-  gap: 12px;
-  align-items: start;
+  display: block;
   padding: 2px 0;
 }
 
@@ -2662,42 +2659,39 @@ textarea {
     inset 0 0 0 1px rgba(96, 165, 250, 0.16);
 }
 
-.pilot-terminal__time {
-  color: #90a4cf;
-}
-
-.pilot-terminal__level {
-  font-weight: 700;
-}
-
-.pilot-terminal__level--info {
-  color: #53da98;
-}
-
-.pilot-terminal__level--warn {
-  color: #fbbf24;
-}
-
-.pilot-terminal__level--error {
-  color: #ff8c8c;
-}
-
-.pilot-terminal__level--debug {
-  color: #a78bfa;
-}
-
-.pilot-terminal__level--trace {
-  color: #67e8f9;
-}
-
-.pilot-terminal__level--system {
-  color: #8fb6ff;
-}
-
 .pilot-terminal__text {
   color: #f0f4ff;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.pilot-terminal__prefix {
+  color: #90a4cf;
+  font-weight: 700;
+}
+
+.pilot-terminal__text--info .pilot-terminal__prefix {
+  color: #53da98;
+}
+
+.pilot-terminal__text--warn .pilot-terminal__prefix {
+  color: #fbbf24;
+}
+
+.pilot-terminal__text--error .pilot-terminal__prefix {
+  color: #ff8c8c;
+}
+
+.pilot-terminal__text--debug .pilot-terminal__prefix {
+  color: #a78bfa;
+}
+
+.pilot-terminal__text--trace .pilot-terminal__prefix {
+  color: #67e8f9;
+}
+
+.pilot-terminal__text--system .pilot-terminal__prefix {
+  color: #8fb6ff;
 }
 
 .pilot-terminal__text--highlight {

@@ -1073,6 +1073,20 @@ function getStatusTone(status: RuntimeState['status']): 'running' | 'stopped' | 
   return 'stopped';
 }
 
+function canStopRuntime(status: RuntimeState['status']): boolean {
+  return status === 'running' || status === 'starting';
+}
+
+function isStopActionDisabled(busyKey: string, serviceId: string, status: RuntimeState['status']): boolean {
+  if (!busyKey) {
+    return false;
+  }
+  if (status === 'starting') {
+    return busyKey === 'install-update' || busyKey === `stop-${serviceId}`;
+  }
+  return true;
+}
+
 function getServiceAvatarTone(index: number): 'blue' | 'green' | 'purple' | 'amber' | 'rose' {
   const tones = ['blue', 'green', 'purple', 'amber', 'rose'] as const;
   return tones[index % tones.length];
@@ -1190,12 +1204,21 @@ function getLogLevel(entry: LogEntry): LogLevel {
   return (match?.[1] as LogLevel | undefined) ?? 'INFO';
 }
 
+function formatLogConsolePrefix(entry: LogEntry, level: LogLevel): string {
+  return `${formatLogTime(entry.timestamp)} ${level}`;
+}
+
 function stripAnsiSequences(text: string): string {
   return text.replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\))/g, '');
 }
 
-function getLogMessage(entry: LogEntry): string {
-  return stripAnsiSequences(entry.text).replace(/^\d{2}:\d{2}:\d{2}\.\d{3}\s+\w+\s+/, '');
+export function getLogMessage(entry: LogEntry): string {
+  return stripAnsiSequences(entry.text)
+    .replace(/^\d{2}:\d{2}:\d{2}\.\d{3}\s+\w+\s+/, '')
+    .replace(
+      /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d{3,9})?(?:Z|[+-]\d{2}:?\d{2})?\s+(?:INFO|WARN|ERROR|DEBUG|TRACE)\s+/,
+      ''
+    );
 }
 
 function isRootCauseLog(entry: LogEntry): boolean {
@@ -1722,9 +1745,8 @@ const VirtualLogList = memo(function VirtualLogList({
                   activeSearchMatchId === entry.id ? 'pilot-terminal__row--search-current' : ''
                 }`}
               >
-                <span className="pilot-terminal__time">{formatLogTime(entry.timestamp)}</span>
-                <span className={`pilot-terminal__level pilot-terminal__level--${level.toLowerCase()}`}>{level}</span>
-                <span className={`pilot-terminal__text ${highlight ? 'pilot-terminal__text--highlight' : ''}`}>
+                <span className={`pilot-terminal__text pilot-terminal__text--${level.toLowerCase()} ${highlight ? 'pilot-terminal__text--highlight' : ''}`}>
+                  <span className="pilot-terminal__prefix">{formatLogConsolePrefix(entry, level)} </span>
                   {renderLogSearchHighlight(message, searchQuery, activeSearchMatchId === entry.id)}
                 </span>
               </div>
@@ -2644,7 +2666,7 @@ export function App() {
   }
 
   async function handleBatchStart() {
-    const targets = filteredServices.filter((service) => getRuntime(snapshot, service.id).status !== 'running');
+    const targets = filteredServices.filter((service) => !['running', 'starting', 'stopping'].includes(getRuntime(snapshot, service.id).status));
     await runAction('batch-start', async () => {
       clearServiceLogsForLaunch(targets.map((service) => service.id));
       await Promise.allSettled(targets.map((service) => window.servicePilot.startService(service.id)));
@@ -3240,6 +3262,7 @@ export function App() {
                     const tone = getStatusTone(runtime.status);
                     const serviceGroups = getServiceGroups(snapshot.groups, service.id);
                     const servicePort = resolveRuntimePort(service, runtime);
+                    const serviceCanStop = canStopRuntime(runtime.status);
 
                     return (
                       <article
@@ -3278,21 +3301,23 @@ export function App() {
                         <div className="service-row__last">{formatLastStart(runtime.startedAt, language)}</div>
 
                         <div className="service-row__actions">
-                          {runtime.status === 'running' ? (
+                          {serviceCanStop ? (
                             <>
+                              {runtime.status === 'running' && (
+                                <ActionButton
+                                  compact
+                                  className="service-row__restart-button"
+                                  disabled={busyKey !== ''}
+                                  iconOnly
+                                  icon="restart"
+                                  kind="default"
+                                  label={copy.restart}
+                                  onClick={() => handleRestartService(service.id)}
+                                />
+                              )}
                               <ActionButton
                                 compact
-                                className="service-row__restart-button"
-                                disabled={busyKey !== ''}
-                                iconOnly
-                                icon="restart"
-                                kind="default"
-                                label={copy.restart}
-                                onClick={() => handleRestartService(service.id)}
-                              />
-                              <ActionButton
-                                compact
-                                disabled={busyKey !== ''}
+                                disabled={isStopActionDisabled(busyKey, service.id, runtime.status)}
                                 iconOnly
                                 icon="stop"
                                 kind="danger"

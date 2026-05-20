@@ -1,8 +1,8 @@
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppSnapshot, LogEntry, ServiceConfig, ServicePilotApi } from '@shared/models';
-import { App } from './App';
+import { App, getLogMessage } from './App';
 
 function springService(overrides: Partial<ServiceConfig> = {}): ServiceConfig {
   return {
@@ -82,6 +82,16 @@ function createMockApi(initialSnapshot: AppSnapshot): ServicePilotApi {
     onLogEntry: vi.fn().mockReturnValue(vi.fn()),
     onCloseRequested: vi.fn().mockReturnValue(vi.fn())
   };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((nextResolve, nextReject) => {
+    resolve = nextResolve;
+    reject = nextReject;
+  });
+  return { promise, reject, resolve };
 }
 
 async function renderApp(initialSnapshot: AppSnapshot) {
@@ -177,6 +187,67 @@ describe('App service flows', () => {
     await user.click(within(row!).getByRole('button', { name: 'Start' }));
 
     await waitFor(() => expect(api.startService).toHaveBeenCalledWith('svc-1'));
+  });
+
+  it('removes duplicate application timestamps from log messages', () => {
+    expect(
+      getLogMessage({
+        id: 'log-1',
+        serviceId: 'svc-1',
+        timestamp: '2026-05-20T07:20:00.027Z',
+        source: 'stdout',
+        text: '2026-05-20 15:20:00.029  INFO 29768 --- [scheduling-1] c.a.Task : started'
+      })
+    ).toBe('29768 --- [scheduling-1] c.a.Task : started');
+  });
+
+  it('can stop a service while its start action is still pending', async () => {
+    const service = springService();
+    const start = deferred<void>();
+    const { api, user } = await renderApp(
+      snapshot({
+        services: [service],
+        runtime: {
+          [service.id]: {
+            serviceId: service.id,
+            status: 'stopped'
+          }
+        }
+      })
+    );
+    vi.mocked(api.startService).mockReturnValue(start.promise);
+
+    const emitSnapshot = vi.mocked(api.onSnapshot).mock.calls[0]?.[0];
+    expect(emitSnapshot).toBeDefined();
+
+    const row = screen.getAllByText('Gateway')[0].closest('article');
+    expect(row).not.toBeNull();
+
+    await user.click(within(row!).getByRole('button', { name: 'Start' }));
+    await waitFor(() => expect(api.startService).toHaveBeenCalledWith('svc-1'));
+
+    act(() => {
+      emitSnapshot!(
+        snapshot({
+          services: [service],
+          runtime: {
+            [service.id]: {
+              serviceId: service.id,
+              status: 'starting',
+              startedAt: '2026-05-20T00:00:00.000Z'
+            }
+          }
+        })
+      );
+    });
+
+    const stopButton = within(row!).getByRole('button', { name: 'Stop' });
+    expect(stopButton).toBeEnabled();
+
+    await user.click(stopButton);
+
+    await waitFor(() => expect(api.stopService).toHaveBeenCalledWith('svc-1'));
+    start.resolve();
   });
 
   it('opens the update confirmation from the header update button', async () => {
