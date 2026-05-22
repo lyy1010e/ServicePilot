@@ -2579,6 +2579,10 @@ textarea {
 }
 
 .pilot-log-search-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   padding: 10px 14px;
   border-bottom: 1px solid rgba(148, 163, 184, 0.1);
   color: var(--text-soft);
@@ -2967,48 +2971,17 @@ textarea {
   border-top: 1px solid rgba(148, 163, 184, 0.1);
 }
 
-.modal-footer--split .modal-btn.danger:first-child {
+.modal-footer--split .modal-btn--danger:first-child {
   margin-right: auto;
 }
 
 .modal-btn {
-  height: 34px;
-  min-width: 82px;
+  min-width: 92px;
+  height: 36px;
+  min-height: 36px;
   padding: 0 14px;
-  border-radius: 8px;
-  font-size: 13px;
-  font-weight: 500;
-}
-
-.modal-btn.secondary {
-  color: #cbd5e1;
-  background: rgba(255, 255, 255, 0.035);
-  border: 1px solid rgba(148, 163, 184, 0.16);
-}
-
-.modal-btn.secondary:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.07);
-}
-
-.modal-btn.primary {
-  color: #fff;
-  background: rgba(59, 130, 246, 0.88);
-  border: 1px solid rgba(59, 130, 246, 0.4);
-}
-
-.modal-btn.primary:hover:not(:disabled) {
-  background: rgb(59, 130, 246);
-}
-
-.modal-btn.danger {
-  color: #f87171;
-  background: rgba(239, 68, 68, 0.1);
-  border: 1px solid rgba(239, 68, 68, 0.3);
-}
-
-.modal-btn.danger:hover:not(:disabled) {
-  color: #fca5a5;
-  background: rgba(239, 68, 68, 0.16);
+  border-radius: var(--radius);
+  box-sizing: border-box;
 }
 
 .modal-btn:disabled {

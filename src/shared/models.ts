@@ -134,43 +134,78 @@ export interface BatchImportItem {
 }
 
 export interface ServicePilotApi {
-  getAppVersion: () => Promise<string>;
+  app: AppApi;
+  services: ServiceApi;
+  groups: GroupApi;
+  logs: LogApi;
+  settings: SettingsApi;
+  dialog: DialogApi;
+  window: WindowApi;
+  events: EventApi;
+}
+
+export interface AppApi {
+  getVersion: () => Promise<string>;
   checkUpdate: () => Promise<AppUpdateInfo | null>;
   installUpdate: () => Promise<void>;
   getSnapshot: () => Promise<AppSnapshot>;
-  listServices: () => Promise<ServiceConfig[]>;
-  listGroups: () => Promise<ServiceGroup[]>;
-  getLogHistory: (serviceId: string) => Promise<LogEntry[]>;
-  pickDirectory: (defaultPath?: string) => Promise<string | null>;
-  pickFile: (defaultPath?: string, filters?: Array<{ name: string; extensions: string[] }>) => Promise<string | null>;
-  setLanguage: (language: AppLanguage) => Promise<void>;
-  saveSettings: (settings: AppSettings) => Promise<void>;
+  showWindow: () => Promise<void>;
+  exit: () => Promise<void>;
+}
+
+export interface ServiceApi {
+  list: () => Promise<ServiceConfig[]>;
   detectProject: (projectDir: string) => Promise<ProjectDetection>;
-  importIdeaMavenConfig: (projectDir: string) => Promise<AppSettings>;
   importProject: (projectDir: string) => Promise<ServiceConfig>;
   importIdeaProject: (projectDir: string) => Promise<ServiceConfig>;
+  scanSpring: (rootDir: string) => Promise<ScanResult>;
+  batchImport: (items: BatchImportItem[]) => Promise<ServiceConfig[]>;
+  save: (input: SaveServiceInput) => Promise<ServiceConfig>;
+  delete: (serviceId: string) => Promise<void>;
+  start: (serviceId: string) => Promise<void>;
+  stop: (serviceId: string) => Promise<void>;
+  restart: (serviceId: string) => Promise<void>;
+  openUrl: (serviceId: string) => Promise<void>;
+}
+
+export interface GroupApi {
+  list: () => Promise<ServiceGroup[]>;
+  save: (input: SaveGroupInput) => Promise<ServiceGroup>;
+  delete: (groupId: string) => Promise<void>;
+  move: (groupId: string, targetIndex: number) => Promise<void>;
+  start: (groupId: string) => Promise<void>;
+  stop: (groupId: string) => Promise<void>;
+  setServiceMembership: (serviceId: string, groupIds: string[]) => Promise<void>;
+  addServicesToGroups: (serviceIds: string[], groupIds: string[]) => Promise<void>;
+}
+
+export interface LogApi {
+  history: (serviceId: string) => Promise<LogEntry[]>;
+  clear: (serviceId: string) => Promise<void>;
+}
+
+export interface SettingsApi {
+  setLanguage: (language: AppLanguage) => Promise<void>;
+  save: (settings: AppSettings) => Promise<void>;
+  importIdeaMavenConfig: (projectDir: string) => Promise<AppSettings>;
   importState: () => Promise<void>;
   exportState: () => Promise<void>;
-  scanSpringServices: (rootDir: string) => Promise<ScanResult>;
-  batchImportServices: (items: BatchImportItem[]) => Promise<ServiceConfig[]>;
-  saveService: (input: SaveServiceInput) => Promise<ServiceConfig>;
-  deleteService: (serviceId: string) => Promise<void>;
-  startService: (serviceId: string) => Promise<void>;
-  stopService: (serviceId: string) => Promise<void>;
-  restartService: (serviceId: string) => Promise<void>;
-  openServiceUrl: (serviceId: string) => Promise<void>;
-  saveGroup: (input: SaveGroupInput) => Promise<ServiceGroup>;
-  deleteGroup: (groupId: string) => Promise<void>;
-  moveGroup: (groupId: string, targetIndex: number) => Promise<void>;
-  startGroup: (groupId: string) => Promise<void>;
-  stopGroup: (groupId: string) => Promise<void>;
-  minimizeWindow: () => Promise<void>;
-  toggleMaximizeWindow: () => Promise<void>;
-  startWindowDrag: () => Promise<void>;
-  closeWindow: () => Promise<void>;
-  showWindow: () => Promise<void>;
-  exitApp: () => Promise<void>;
+}
+
+export interface DialogApi {
+  pickDirectory: (defaultPath?: string) => Promise<string | null>;
+  pickFile: (defaultPath?: string, filters?: Array<{ name: string; extensions: string[] }>) => Promise<string | null>;
+}
+
+export interface WindowApi {
+  minimize: () => Promise<void>;
+  toggleMaximize: () => Promise<void>;
+  startDrag: () => Promise<void>;
+  close: () => Promise<void>;
+  onCloseRequested: (listener: () => void) => () => void;
+}
+
+export interface EventApi {
   onSnapshot: (listener: (snapshot: AppSnapshot) => void) => () => void;
   onLogEntry: (listener: (entry: LogEntry) => void) => () => void;
-  onCloseRequested: (listener: () => void) => () => void;
 }

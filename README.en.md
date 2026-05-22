@@ -5,25 +5,29 @@
 
 [中文](README.md) | [English](README.en.md)
 
-ServicePilot is a Windows-first desktop workbench for starting, stopping, and observing local development projects. It keeps Spring Boot and Vue/Rust frontend dev services in one console, so local multi-service debugging does not have to be split across many terminals and scattered logs.
+ServicePilot is a Windows-first desktop workbench for starting, stopping, and observing local development projects. It keeps Spring Boot, frontend, and Rust dev services in one console, so local multi-service debugging does not have to be split across many terminals, scattered logs, and unclear runtime states.
+
+It also solves a very practical problem: reducing the need to keep multiple IDEA windows open just to inspect configurations, launch services, or watch logs. For large Java/Spring projects, that can meaningfully reduce memory pressure and keep daily debugging inside a lighter desktop console.
 
 ServicePilot has a strict local-development boundary: launch, stop, import, and restart flows must not run Git operations, publish artifacts, or deploy anything to remote systems.
 
 ## Highlights
 
 - Manage local Spring Boot, frontend, and Rust dev services in one app, with `maven`, `java-main`, `vue-preset`, `cargo-run`, and guarded `custom` launch types.
-- Start, stop, and restart single services, with groups and batch operations.
-- Select a project directory to auto-detect type (Spring Boot, frontend, Rust) and create services; multi-module projects are scanned for batch import.
-- JVM arguments, Spring Profiles, Maven advanced options (force refresh, debug mode, disable fork), and global Maven config.
-- Real-time log streaming, search, level filtering, with optional auto-clear before restart.
+- Start, stop, and restart single services, with service groups, membership management, and batch operations.
+- Select a project directory to auto-detect Spring Boot, frontend, or Rust projects; multi-module projects are scanned for batch import.
+- Read IDEA/Maven project configuration to reduce the need to open several IDEA windows for launch details.
+- JVM arguments, Spring Profiles, Maven advanced options, and global Maven config.
+- Real-time log streaming, search, level filtering, backend log clearing, and optional auto-clear before startup or restart.
 - Detect ports and access URLs from startup logs, with Chinese/English UI support.
 - Packaged with Tauri 2 on Windows, with tray and window controls.
 
 ## How To Use
 
-1. Add a service by selecting a project directory — ServicePilot auto-detects the type (Spring Boot, frontend, Rust) and creates the service; multi-module projects are scanned for batch import.
-2. Start, stop, and view logs from the home screen, with batch operations via groups.
-3. Configure global Maven `settings.xml`, local repository paths, and other options in Settings.
+1. Add a service by selecting a project directory. ServicePilot auto-detects the type and creates the service; multi-module projects are scanned for batch import.
+2. Start, stop, restart, and view logs from the home screen.
+3. Use groups to manage common debugging sets and batch start or stop related services.
+4. Configure global Maven `settings.xml`, local repository paths, and log behavior in Settings.
 
 ## Safety Boundary
 
@@ -45,9 +49,31 @@ Launch, stop, import, and restart flows should not run:
 - Remote deployment or mutation commands such as `kubectl`, `helm`, `ssh`, `scp`, or `rsync`
 - Registry publish or login commands such as `docker push` or `docker login`
 
+## Architecture Boundaries
+
+ServicePilot is split by frontend and backend domains, with no compatibility layer for the old flat API.
+
+The frontend API is exposed by namespace: `app`, `services`, `groups`, `logs`, `settings`, `dialog`, `window`, and `events`. New features should also get their own frontend API namespace and feature folder.
+
+The Rust backend is split by responsibility:
+
+- `commands`: Tauri command adapter; argument mapping and delegation only
+- `app`: Tauri shell, tray, and exit flow
+- `models`: DTOs and state models
+- `store`: in-memory state, snapshots, and persistence
+- `services`: service CRUD, import, and scanning
+- `runtime`: process lifecycle, start, stop, and restart
+- `groups`: group domain logic
+- `logs`: log domain logic
+- `settings`: system settings, import, and export
+- `runtime_support`, `log_parsing`, `idea_support`, `frontend_support`, `service_detection`, and `common`: domain support helpers
+
+New modules should not be added back into `App.tsx` or `lib.rs`; they need explicit frontend feature/API boundaries and backend command/domain files.
+
 ## Design Goals
 
 - Make local multi-service debugging lighter: one desktop window for services, groups, logs, and runtime state.
+- Reduce development-machine memory pressure: avoid opening multiple IDEA instances just to launch services or inspect configuration.
 - Keep launches predictable: prefer built-in presets, and validate guarded custom commands in the backend.
 - Avoid mutating user projects: app-owned state is stored in ServicePilot's own data directory, not in source-controlled project files.
 - Work well for Chinese and English development environments: the UI can switch languages, and Maven, IDEA projects, and Windows process management are first-class scenarios.
@@ -76,15 +102,13 @@ npm run build
 
 ### Publish Updates
 
-One-command release (recommended):
+One-command release:
 
 ```bash
 npm run release -- 1.0.4
 ```
 
-Before publishing, create matching release notes such as `docs/releases/v1.0.4.md`. The notes are written into the updater `latest.json` and used as the GitHub Release body. List new feature points concretely; page and style refinements can be summarized.
-
-This automatically: updates version numbers → commits and pushes → creates a tag → GitHub Actions builds and creates the Release. If `docs/releases/v1.0.4.md` exists, it is committed too.
+Before publishing, create matching release notes such as `docs/releases/v1.0.4.md`. The notes are written into the updater `latest.json` and used as the GitHub Release body.
 
 Local manual release:
 
@@ -120,4 +144,3 @@ TAURI_SIGNING_PRIVATE_KEY_FILE=secrets/tauri-signing.key
 - Local app state is persisted under the application data directory as `service-pilot-state.json`.
 - Runtime log history is kept in memory and capped per service.
 - The backend is currently optimized for Windows process management semantics.
-

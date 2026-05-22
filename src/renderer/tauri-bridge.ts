@@ -93,44 +93,63 @@ function extractErrorMessage(error: unknown, fallback: string): string {
 
 export function createServicePilotApi(): ServicePilotApi {
   return {
-    getAppVersion: () => invoke<string>('get_app_version'),
-    checkUpdate: () => invoke<AppUpdateInfo | null>('check_update'),
-    installUpdate: () => invoke<void>('install_update'),
-    getSnapshot: () => invoke<AppSnapshot>('get_snapshot'),
-    setLanguage: (language) => invoke<void>('set_language', { language }),
-    saveSettings: (settings) => invoke<void>('save_settings', { settings: settings as AppSettings }),
-    listServices: () => invoke<ServiceConfig[]>('list_services'),
-    listGroups: () => invoke<ServiceGroup[]>('list_groups'),
-    getLogHistory: (serviceId) => invoke<LogEntry[]>('get_log_history', { serviceId }),
-    pickDirectory: (defaultPath) => invoke<string | null>('pick_directory', { defaultPath }),
-    pickFile: (defaultPath, filters) => invoke<string | null>('pick_file', { defaultPath, filters }),
-    detectProject: (projectDir) => invoke<ProjectDetection>('detect_project', { projectDir }),
-    importIdeaMavenConfig: (projectDir) => invoke<AppSettings>('import_idea_maven_config', { projectDir }),
-    importProject: (projectDir) => invoke<ServiceConfig>('import_project', { projectDir }),
-    importIdeaProject: (projectDir) => invoke<ServiceConfig>('import_idea_project', { projectDir }),
-    importState: () => invoke<void>('import_state'),
-    exportState: () => invoke<void>('export_state'),
-    scanSpringServices: (rootDir) => invoke<ScanResult>('scan_spring_services', { rootDir }),
-    batchImportServices: (items) => invoke<ServiceConfig[]>('batch_import_services', { items: items as BatchImportItem[] }),
-    saveService: (input) => invoke<ServiceConfig>('save_service', { input: input as SaveServiceInput }),
-    deleteService: (serviceId) => invoke<void>('delete_service', { serviceId }),
-    startService: (serviceId) => invoke<void>('start_service', { serviceId }),
-    stopService: (serviceId) => invoke<void>('stop_service', { serviceId }),
-    restartService: (serviceId) => invoke<void>('restart_service', { serviceId }),
-    openServiceUrl: (serviceId) => invoke<void>('open_service_url', { serviceId }),
-    saveGroup: (input) => invoke<ServiceGroup>('save_group', { input: input as SaveGroupInput }),
-    deleteGroup: (groupId) => invoke<void>('delete_group', { groupId }),
-    moveGroup: (groupId, targetIndex) => invoke<void>('move_group', { groupId, targetIndex }),
-    startGroup: (groupId) => invoke<void>('start_group', { groupId }),
-    stopGroup: (groupId) => invoke<void>('stop_group', { groupId }),
-    minimizeWindow: () => invoke<void>('minimize_window'),
-    toggleMaximizeWindow: () => invoke<void>('toggle_maximize_window'),
-    startWindowDrag: () => invoke<void>('start_window_drag'),
-    closeWindow: () => invoke<void>('close_window'),
-    showWindow: () => invoke<void>('show_window'),
-    exitApp: () => invoke<void>('exit_app'),
-    onSnapshot: (listener) => wrapListener<AppSnapshot>('snapshot:update', listener),
-    onLogEntry: (listener) => wrapListener<LogEntry>('log:entry', listener),
-    onCloseRequested: (listener) => wrapListener<void>('close-requested', () => listener())
+    app: {
+      getVersion: () => invoke<string>('app_get_version'),
+      checkUpdate: () => invoke<AppUpdateInfo | null>('app_check_update'),
+      installUpdate: () => invoke<void>('app_install_update'),
+      getSnapshot: () => invoke<AppSnapshot>('app_get_snapshot'),
+      showWindow: () => invoke<void>('app_show_window'),
+      exit: () => invoke<void>('app_exit')
+    },
+    services: {
+      list: () => invoke<ServiceConfig[]>('service_list'),
+      detectProject: (projectDir) => invoke<ProjectDetection>('service_detect_project', { projectDir }),
+      importProject: (projectDir) => invoke<ServiceConfig>('service_import_project', { projectDir }),
+      importIdeaProject: (projectDir) => invoke<ServiceConfig>('service_import_idea_project', { projectDir }),
+      scanSpring: (rootDir) => invoke<ScanResult>('service_scan_spring', { rootDir }),
+      batchImport: (items) => invoke<ServiceConfig[]>('service_batch_import', { items: items as BatchImportItem[] }),
+      save: (input) => invoke<ServiceConfig>('service_save', { input: input as SaveServiceInput }),
+      delete: (serviceId) => invoke<void>('service_delete', { serviceId }),
+      start: (serviceId) => invoke<void>('service_start', { serviceId }),
+      stop: (serviceId) => invoke<void>('service_stop', { serviceId }),
+      restart: (serviceId) => invoke<void>('service_restart', { serviceId }),
+      openUrl: (serviceId) => invoke<void>('service_open_url', { serviceId })
+    },
+    groups: {
+      list: () => invoke<ServiceGroup[]>('group_list'),
+      save: (input) => invoke<ServiceGroup>('group_save', { input: input as SaveGroupInput }),
+      delete: (groupId) => invoke<void>('group_delete', { groupId }),
+      move: (groupId, targetIndex) => invoke<void>('group_move', { groupId, targetIndex }),
+      start: (groupId) => invoke<void>('group_start', { groupId }),
+      stop: (groupId) => invoke<void>('group_stop', { groupId }),
+      setServiceMembership: (serviceId, groupIds) => invoke<void>('group_set_service_membership', { serviceId, groupIds }),
+      addServicesToGroups: (serviceIds, groupIds) => invoke<void>('group_add_services_to_groups', { serviceIds, groupIds })
+    },
+    logs: {
+      history: (serviceId) => invoke<LogEntry[]>('log_history', { serviceId }),
+      clear: (serviceId) => invoke<void>('log_clear', { serviceId })
+    },
+    settings: {
+      setLanguage: (language) => invoke<void>('settings_set_language', { language }),
+      save: (settings) => invoke<void>('settings_save', { settings: settings as AppSettings }),
+      importIdeaMavenConfig: (projectDir) => invoke<AppSettings>('settings_import_idea_maven_config', { projectDir }),
+      importState: () => invoke<void>('settings_import_state'),
+      exportState: () => invoke<void>('settings_export_state')
+    },
+    dialog: {
+      pickDirectory: (defaultPath) => invoke<string | null>('dialog_pick_directory', { defaultPath }),
+      pickFile: (defaultPath, filters) => invoke<string | null>('dialog_pick_file', { defaultPath, filters })
+    },
+    window: {
+      minimize: () => invoke<void>('window_minimize'),
+      toggleMaximize: () => invoke<void>('window_toggle_maximize'),
+      startDrag: () => invoke<void>('window_start_drag'),
+      close: () => invoke<void>('window_close'),
+      onCloseRequested: (listener) => wrapListener<void>('close-requested', () => listener())
+    },
+    events: {
+      onSnapshot: (listener) => wrapListener<AppSnapshot>('snapshot:update', listener),
+      onLogEntry: (listener) => wrapListener<LogEntry>('log:entry', listener)
+    }
   };
 }

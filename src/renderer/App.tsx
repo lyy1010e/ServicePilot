@@ -1,4 +1,4 @@
-import { memo, startTransition, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { memo, startTransition, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import type {
   AppSettings,
   AppLanguage,
@@ -23,6 +23,19 @@ import {
   parseProfiles,
   toggleValue
 } from './app-utils';
+import {
+  LOG_LEVEL_FILTERS,
+  formatLogConsolePrefix,
+  getLogLevel,
+  getLogMessage,
+  isRootCauseLog,
+  mergeLogEntries,
+  renderLogSearchHighlight,
+  type LogLevelFilter
+} from './features/logs/log-utils';
+import { buildGroupForm, buildServiceGroupForm, type GroupFormState, type ServiceGroupFormState } from './features/groups/group-forms';
+import { buildServiceForm, getDefaultCommand, getProjectNameFromPath, isSimpleDirectoryImportForm, type ServiceFormState } from './features/services/service-forms';
+import { buildSettingsForm, type SettingsFormState } from './features/settings/settings-forms';
 import servicePilotLogo from './assets/icons/brand/servicepilot.svg';
 import angularIcon from './assets/icons/tech/angular.svg';
 import astroIcon from './assets/icons/tech/astro.svg';
@@ -62,12 +75,6 @@ const EMPTY_SNAPSHOT: AppSnapshot = {
 
 type GroupSelection = 'all' | string;
 type NavKey = 'services' | 'groups' | 'settings';
-type LogLevel = 'SYSTEM' | 'ERROR' | 'WARN' | 'INFO' | 'DEBUG' | 'TRACE';
-type LogLevelFilter = 'ALL' | LogLevel;
-
-const LOG_LEVELS: LogLevel[] = ['ERROR', 'WARN', 'INFO', 'DEBUG', 'TRACE', 'SYSTEM'];
-const LOG_LEVEL_FILTERS: LogLevelFilter[] = ['ALL', ...LOG_LEVELS];
-
 const TECH_ICON_META: Record<string, { src: string; label: string }> = {
   'spring-boot': { src: springBootIcon, label: 'Spring Boot' },
   vue: { src: vueIcon, label: 'Vue' },
@@ -120,6 +127,7 @@ type IconName =
   | 'restart'
   | 'start'
   | 'stop'
+  | 'check'
   | 'delete'
   | 'more'
   | 'external'
@@ -588,49 +596,12 @@ const NAV_ITEMS: Array<{ key: NavKey; icon: IconName; copyKey: keyof Copy }> = [
   { key: 'settings', icon: 'menuSettings', copyKey: 'systemSettings' }
 ];
 
-type ServiceFormState = {
-  id?: string;
-  name: string;
-  serviceKind: ServiceKind;
-  launchType: ServiceConfig['launchType'];
-  workingDir: string;
-  command: string;
-  mainClass: string;
-  classpath: string;
-  jvmArgsText: string;
-  argsText: string;
-  envText: string;
-  profilesText: string;
-  portText: string;
-  url: string;
-  frontendScript: string;
-  mavenForceUpdate: boolean;
-  mavenDebugMode: boolean;
-  mavenDisableFork: boolean;
-  groupIds: string[];
-};
-
-type GroupFormState = {
-  id?: string;
-  name: string;
-  serviceIds: string[];
-};
-
-type ServiceGroupFormState = {
-  serviceId: string;
-  groupIds: string[];
-};
 
 type FeedbackState = {
   message: string;
   tone: 'error' | 'success' | 'info';
 } | null;
 
-type SettingsFormState = {
-  mavenSettingsFile: string;
-  mavenLocalRepository: string;
-  clearLogsOnRestart: boolean;
-};
 
 function AppIcon({ icon, size = 18, className = '' }: { icon: IconName; size?: number; className?: string }) {
   const common = {
@@ -720,6 +691,12 @@ function AppIcon({ icon, size = 18, className = '' }: { icon: IconName; size?: n
       return (
         <svg {...common}>
           <rect x="6.2" y="6.2" width="11.6" height="11.6" rx="1.8" fill="currentColor" stroke="none" />
+        </svg>
+      );
+    case 'check':
+      return (
+        <svg {...common}>
+          <path d="M5 12.5l4.2 4.2L19 7" />
         </svg>
       );
     case 'addService':
@@ -906,99 +883,6 @@ function AppIcon({ icon, size = 18, className = '' }: { icon: IconName; size?: n
   }
 }
 
-function buildServiceForm(service?: ServiceConfig, groups?: ServiceGroup[]): ServiceFormState {
-  return {
-    id: service?.id,
-    name: service?.name ?? '',
-    serviceKind: service?.serviceKind ?? 'spring',
-    launchType: service?.launchType ?? 'java-main',
-    workingDir: service?.workingDir ?? '',
-    command: service?.command ?? '',
-    mainClass: service?.mainClass ?? '',
-    classpath: service?.classpath ?? '',
-    jvmArgsText: service?.jvmArgs?.join(' ') ?? '',
-    argsText: service?.args.join(' ') ?? '',
-    envText: Object.entries(service?.env ?? {})
-      .map(([key, value]) => `${key}=${value}`)
-      .join('\n'),
-    profilesText: service?.profiles?.join(', ') ?? '',
-    portText: service?.port ? String(service.port) : '',
-    url: service?.url ?? '',
-    frontendScript: service?.frontendScript ?? 'dev',
-    mavenForceUpdate: service?.mavenForceUpdate ?? false,
-    mavenDebugMode: service?.mavenDebugMode ?? false,
-    mavenDisableFork: service?.mavenDisableFork ?? false,
-    groupIds: service && groups
-      ? groups.filter((group) => group.serviceIds.includes(service.id)).map((group) => group.id)
-      : []
-  };
-}
-
-function buildGroupForm(group?: ServiceGroup): GroupFormState {
-  return {
-    id: group?.id,
-    name: group?.name ?? '',
-    serviceIds: group?.serviceIds ?? []
-  };
-}
-
-function buildServiceGroupForm(serviceId: string, groups: ServiceGroup[]): ServiceGroupFormState {
-  return {
-    serviceId,
-    groupIds: groups.filter((group) => group.serviceIds.includes(serviceId)).map((group) => group.id)
-  };
-}
-
-function buildSettingsForm(settings: AppSettings): SettingsFormState {
-  return {
-    mavenSettingsFile: settings.mavenSettingsFile ?? '',
-    mavenLocalRepository: settings.mavenLocalRepository ?? '',
-    clearLogsOnRestart: settings.clearLogsOnRestart ?? true
-  };
-}
-
-function getProjectNameFromPath(projectPath: string): string {
-  const normalized = projectPath.trim().replace(/[\\/]+$/, '');
-  const parts = normalized.split(/[\\/]+/);
-  return parts[parts.length - 1] ?? '';
-}
-
-function getDefaultCommand(launchType: ServiceConfig['launchType']): string {
-  if (launchType === 'maven') {
-    return 'mvn';
-  }
-  if (launchType === 'java-main') {
-    return 'java';
-  }
-  if (launchType === 'vue-preset') {
-    return 'npm';
-  }
-  if (launchType === 'cargo-run') {
-    return 'cargo';
-  }
-  return '';
-}
-
-function isSimpleDirectoryImportForm(form: ServiceFormState): boolean {
-  const defaultName = getProjectNameFromPath(form.workingDir);
-  return (
-    !form.id &&
-    Boolean(form.workingDir.trim()) &&
-    (!form.name.trim() || form.name.trim() === defaultName) &&
-    form.serviceKind === 'spring' &&
-    form.launchType === 'java-main' &&
-    !form.command.trim() &&
-    !form.mainClass.trim() &&
-    !form.classpath.trim() &&
-    !form.jvmArgsText.trim() &&
-    !form.argsText.trim() &&
-    !form.envText.trim() &&
-    !form.profilesText.trim() &&
-    !form.portText.trim() &&
-    !form.url.trim()
-  );
-}
-
 function formatLastStart(value: string | undefined, language: AppLanguage): string {
   if (!value) {
     return '--';
@@ -1010,15 +894,6 @@ function formatLastStart(value: string | undefined, language: AppLanguage): stri
     minute: '2-digit',
     second: '2-digit'
   }).format(new Date(value));
-}
-
-function formatLogTime(value: string | undefined): string {
-  if (!value) {
-    return '--';
-  }
-  const date = new Date(value);
-  const pad = (target: number, width = 2) => String(target).padStart(width, '0');
-  return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}.${pad(date.getMilliseconds(), 3)}`;
 }
 
 function getActionErrorMessage(error: unknown, fallback: string): string {
@@ -1193,83 +1068,6 @@ function buildDonutBackground(summary: ReturnType<typeof buildRuntimeSummary>): 
   )`;
 }
 
-function getLogLevel(entry: LogEntry): LogLevel {
-  if (entry.source === 'stderr') {
-    return 'ERROR';
-  }
-  if (entry.source === 'system') {
-    return 'SYSTEM';
-  }
-  const match = stripAnsiSequences(entry.text).match(/\b(INFO|WARN|ERROR|DEBUG|TRACE)\b/);
-  return (match?.[1] as LogLevel | undefined) ?? 'INFO';
-}
-
-function formatLogConsolePrefix(entry: LogEntry, level: LogLevel): string {
-  return `${formatLogTime(entry.timestamp)} ${level}`;
-}
-
-function stripAnsiSequences(text: string): string {
-  return text.replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\))/g, '');
-}
-
-export function getLogMessage(entry: LogEntry): string {
-  return stripAnsiSequences(entry.text)
-    .replace(/^\d{2}:\d{2}:\d{2}\.\d{3}\s+\w+\s+/, '')
-    .replace(
-      /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d{3,9})?(?:Z|[+-]\d{2}:?\d{2})?\s+(?:INFO|WARN|ERROR|DEBUG|TRACE)\s+/,
-      ''
-    );
-}
-
-function isRootCauseLog(entry: LogEntry): boolean {
-  const text = getLogMessage(entry);
-  return (
-    text.includes('MalformedInputException') ||
-    text.includes('parse data from Nacos error') ||
-    text.includes('YAMLException') ||
-    text.includes('Failed to configure a DataSource') ||
-    text.includes('Failed to determine a suitable driver class')
-  );
-}
-
-function shouldAppendToPreviousLog(previous: LogEntry | undefined, entry: LogEntry): boolean {
-  if (!previous || previous.serviceId !== entry.serviceId || previous.source === 'system') {
-    return false;
-  }
-  const previousLevel = getLogLevel(previous);
-  if (previousLevel !== 'ERROR' && previous.source !== 'stderr') {
-    return false;
-  }
-  const text = entry.text.trimStart();
-  return (
-    text.startsWith('at ') ||
-    text.startsWith('... ') ||
-    text.startsWith('Caused by:') ||
-    text.startsWith('Suppressed:') ||
-    /^[\w.$]+(?:Exception|Error):/.test(text)
-  );
-}
-
-const MAX_MERGE_TEXT_LENGTH = 100 * 1024; // 100 KB — 防止单条合并日志无限增长
-
-function mergeLogEntries(entries: LogEntry[], entry: LogEntry): LogEntry[] {
-  const previous = entries[entries.length - 1];
-  if (previous?.id === entry.id) {
-    return [...entries.slice(0, -1), entry].slice(-2000);
-  }
-  if (!shouldAppendToPreviousLog(previous, entry)) {
-    return [...entries, entry].slice(-2000);
-  }
-  const combined = `${previous.text}\n${entry.text}`;
-  const merged = {
-    ...previous,
-    text: combined.length > MAX_MERGE_TEXT_LENGTH
-      ? combined.slice(-MAX_MERGE_TEXT_LENGTH)
-      : combined
-  };
-  return [...entries.slice(0, -1), merged].slice(-2000);
-}
-
 function getGroupTone(name: string): 'blue' | 'purple' {
   return name.includes('网关') ? 'purple' : 'blue';
 }
@@ -1319,16 +1117,29 @@ function ModalButton({
   kind = 'secondary',
   label,
   onClick,
-  disabled = false
+  disabled = false,
+  icon,
+  hideIcon
 }: {
   kind?: 'secondary' | 'primary' | 'danger';
   label: string;
   onClick: () => void;
   disabled?: boolean;
+  icon?: IconName;
+  hideIcon?: boolean;
 }) {
+  const buttonKind = kind === 'secondary' ? 'default' : kind;
+  const buttonIcon = icon ?? (kind === 'primary' ? 'check' : kind === 'danger' ? 'delete' : undefined);
+
   return (
-    <button className={`modal-btn ${kind}`} disabled={disabled} onClick={onClick} type="button">
-      {label}
+    <button
+      className={`modal-btn modal-btn--${kind} action-button action-button--${buttonKind}`}
+      disabled={disabled}
+      onClick={onClick}
+      type="button"
+    >
+      {!hideIcon && buttonIcon && <AppIcon icon={buttonIcon} size={16} />}
+      <span>{label}</span>
     </button>
   );
 }
@@ -1553,42 +1364,6 @@ function isWindowDragBlocked(target: EventTarget | null): boolean {
   );
 }
 
-function renderLogSearchHighlight(text: string, query: string, active: boolean) {
-  const normalizedQuery = query.trim().toLowerCase();
-  if (!normalizedQuery) {
-    return text;
-  }
-
-  const normalizedText = text.toLowerCase();
-  const segments: ReactNode[] = [];
-  let cursor = 0;
-  let matchIndex = normalizedText.indexOf(normalizedQuery);
-
-  while (matchIndex !== -1) {
-    if (matchIndex > cursor) {
-      segments.push(text.slice(cursor, matchIndex));
-    }
-
-    const nextCursor = matchIndex + normalizedQuery.length;
-    segments.push(
-      <mark
-        className={`pilot-terminal__search-hit ${active ? 'pilot-terminal__search-hit--active' : ''}`}
-        key={`${matchIndex}-${nextCursor}`}
-      >
-        {text.slice(matchIndex, nextCursor)}
-      </mark>
-    );
-    cursor = nextCursor;
-    matchIndex = normalizedText.indexOf(normalizedQuery, cursor);
-  }
-
-  if (cursor < text.length) {
-    segments.push(text.slice(cursor));
-  }
-
-  return segments;
-}
-
 const ITEM_HEIGHT_ESTIMATE = 22;
 const OVERSCAN = 10;
 const LOG_BOTTOM_TOLERANCE = 32;
@@ -1769,6 +1544,8 @@ const ServiceRuntimeDuration = memo(function ServiceRuntimeDuration({ runtime }:
   return <div className="service-row__runtime">{formatDuration(runtime, now)}</div>;
 });
 
+export { getLogMessage };
+
 export function App() {
   const [snapshot, setSnapshot] = useState<AppSnapshot>(EMPTY_SNAPSHOT);
   const [isReady, setIsReady] = useState(false);
@@ -1851,15 +1628,15 @@ export function App() {
     if (hasRunning) {
       setExitConfirmOpen(true);
     } else {
-      void window.servicePilot.exitApp();
+      void window.servicePilot.app.exit();
     }
   }, []);
 
 
   useEffect(() => {
     let disposed = false;
-    window.servicePilot
-      .getAppVersion()
+    window.servicePilot.app
+      .getVersion()
       .then((version) => {
         if (!disposed) {
           setAppVersion(version);
@@ -1880,7 +1657,7 @@ export function App() {
     if (!isReady) { return; }
     let disposed = false;
     const timer = window.setTimeout(() => {
-      window.servicePilot
+      window.servicePilot.app
         .checkUpdate()
         .then((nextUpdate) => {
           if (!disposed) {
@@ -1903,7 +1680,7 @@ export function App() {
     let disposed = false;
 
     performance.mark('sp-snapshot-start');
-    window.servicePilot
+    window.servicePilot.app
       .getSnapshot()
       .then((nextSnapshot) => {
         if (!disposed) {
@@ -1925,14 +1702,14 @@ export function App() {
         }
       });
 
-    const offSnapshot = window.servicePilot.onSnapshot((nextSnapshot) => {
+    const offSnapshot = window.servicePilot.events.onSnapshot((nextSnapshot) => {
       setSnapshot(nextSnapshot);
     });
 
-    const offLog = window.servicePilot.onLogEntry((entry) => {
+    const offLog = window.servicePilot.events.onLogEntry((entry) => {
       startTransition(() => {
         setLogsByService((current) => {
-          // 只为当前选中的服务累积实时日志，其他服务切换时从 getLogHistory 加载
+          // 只为当前选中的服务累积实时日志，其他服务切换时从 logs.history 加载
           const selectedId = snapshotRef.current.services.length > 0 ? selectedLogServiceIdRef.current : '';
           if (selectedId && entry.serviceId !== selectedId) {
             return current;
@@ -1946,7 +1723,7 @@ export function App() {
       });
     });
 
-    const offCloseRequested = window.servicePilot.onCloseRequested(() => {
+    const offCloseRequested = window.servicePilot.window.onCloseRequested(() => {
       handleCloseAttempt();
     });
 
@@ -1977,7 +1754,7 @@ export function App() {
       splash.classList.add('fade-out');
       window.setTimeout(() => { splash.remove(); }, 350);
     }
-    window.servicePilot.showWindow().catch(() => {});
+    window.servicePilot.app.showWindow().catch(() => {});
     try {
       performance.mark('sp-ready-end');
       performance.measure('sp: total to interactive', 'sp-bridge-start', 'sp-ready-end');
@@ -2032,8 +1809,8 @@ export function App() {
       return;
     }
 
-    window.servicePilot
-      .getLogHistory(selectedLogServiceId)
+    window.servicePilot.logs
+      .history(selectedLogServiceId)
       .then((entries) => {
         setLogsByService((current) => ({
           ...current,
@@ -2070,16 +1847,16 @@ export function App() {
     return currentLogEntries.filter((entry) => getLogLevel(entry) === logLevelFilter);
   }, [currentLogEntries, logLevelFilter]);
 
-  const filteredLogEntries = useMemo(() => {
+  const matchedLogEntries = useMemo(() => {
     if (!deferredLogQuery) {
-      return levelFilteredLogEntries;
+      return [];
     }
     return levelFilteredLogEntries.filter((entry) => entry.text.toLowerCase().includes(deferredLogQuery));
   }, [deferredLogQuery, levelFilteredLogEntries]);
 
   const hasLogQuery = Boolean(deferredLogQuery);
-  const logMatchCount = hasLogQuery ? filteredLogEntries.length : 0;
-  const activeLogMatchEntryId = hasLogQuery ? filteredLogEntries[logMatchIndex]?.id : undefined;
+  const logMatchCount = matchedLogEntries.length;
+  const activeLogMatchEntryId = hasLogQuery ? matchedLogEntries[logMatchIndex]?.id : undefined;
   const logSearchStatusText = hasLogQuery
     ? logMatchCount
       ? `${Math.min(logMatchIndex + 1, logMatchCount)} / ${logMatchCount}`
@@ -2207,13 +1984,13 @@ export function App() {
   }
 
   async function refreshSnapshot() {
-    const nextSnapshot = await window.servicePilot.getSnapshot();
+    const nextSnapshot = await window.servicePilot.app.getSnapshot();
     setSnapshot(nextSnapshot);
   }
 
   async function handleLanguageChange(nextLanguage: AppLanguage) {
     await runAction(`language-${nextLanguage}`, async () => {
-      await window.servicePilot.setLanguage(nextLanguage);
+      await window.servicePilot.settings.setLanguage(nextLanguage);
     });
   }
 
@@ -2222,7 +1999,7 @@ export function App() {
   }
 
   async function handlePickMavenSettingsFile() {
-    const picked = await window.servicePilot.pickFile(settingsForm.mavenSettingsFile || undefined, [
+    const picked = await window.servicePilot.dialog.pickFile(settingsForm.mavenSettingsFile || undefined, [
       { name: 'XML', extensions: ['xml'] }
     ]);
     if (!picked) {
@@ -2235,7 +2012,7 @@ export function App() {
   }
 
   async function handlePickMavenRepository() {
-    const picked = await window.servicePilot.pickDirectory(settingsForm.mavenLocalRepository || undefined);
+    const picked = await window.servicePilot.dialog.pickDirectory(settingsForm.mavenLocalRepository || undefined);
     if (!picked) {
       return;
     }
@@ -2247,12 +2024,12 @@ export function App() {
 
   async function handleImportIdeaMavenConfig() {
     const defaultPath = serviceForm?.workingDir?.trim() || snapshot.services[0]?.workingDir || undefined;
-    const projectDir = await window.servicePilot.pickDirectory(defaultPath);
+    const projectDir = await window.servicePilot.dialog.pickDirectory(defaultPath);
     if (!projectDir) {
       return;
     }
     await runAction('import-idea-maven', async () => {
-      await window.servicePilot.importIdeaMavenConfig(projectDir);
+      await window.servicePilot.settings.importIdeaMavenConfig(projectDir);
       setFeedback({
         message: copy.ideaConfigImported,
         tone: 'success'
@@ -2262,7 +2039,7 @@ export function App() {
 
   async function handleScanImport() {
     const defaultPath = snapshot.services[0]?.workingDir || undefined;
-    const projectDir = await window.servicePilot.pickDirectory(defaultPath);
+    const projectDir = await window.servicePilot.dialog.pickDirectory(defaultPath);
     if (!projectDir) {
       return;
     }
@@ -2273,7 +2050,7 @@ export function App() {
 
     try {
       // 先尝试扫描 Spring Boot 服务
-      const result = await window.servicePilot.scanSpringServices(projectDir);
+      const result = await window.servicePilot.services.scanSpring(projectDir);
 
       if (result.services.length > 0) {
         // 扫描到 Spring Boot 服务，显示列表让用户选择
@@ -2282,12 +2059,12 @@ export function App() {
         setScanModalOpen(true);
       } else {
         // 没扫描到 Spring Boot 服务，尝试检测前端项目
-        const detected = await window.servicePilot.detectProject(projectDir);
+        const detected = await window.servicePilot.services.detectProject(projectDir);
 
         if (detected.serviceKind === 'vue' || detected.serviceKind === 'rust') {
           // 是前端项目，直接导入
           await runAction('import-project', async () => {
-            const service = await window.servicePilot.importProject(projectDir);
+            const service = await window.servicePilot.services.importProject(projectDir);
             setSelectedLogServiceId(service.id);
             setFeedback({
               message: copy.servicesImported(1),
@@ -2344,22 +2121,10 @@ export function App() {
     const assignGroupIds = [...scanGroupIds];
 
     await runAction('batch-import', async () => {
-      const imported = await window.servicePilot.batchImportServices(items);
+      const imported = await window.servicePilot.services.batchImport(items);
 
       if (imported.length && assignGroupIds.length) {
-        const importedIds = new Set(imported.map((s) => s.id));
-        for (const groupId of assignGroupIds) {
-          const group = snapshot.groups.find((g) => g.id === groupId);
-          if (!group) {
-            continue;
-          }
-          const existingIds = group.serviceIds.filter((id) => !importedIds.has(id));
-          await window.servicePilot.saveGroup({
-            id: group.id,
-            name: group.name,
-            serviceIds: [...existingIds, ...imported.map((s) => s.id)]
-          });
-        }
+        await window.servicePilot.groups.addServicesToGroups(imported.map((s) => s.id), assignGroupIds);
       }
 
       setScanModalOpen(false);
@@ -2392,7 +2157,7 @@ export function App() {
         mavenLocalRepository: settingsForm.mavenLocalRepository.trim(),
         clearLogsOnRestart: settingsForm.clearLogsOnRestart
       };
-      await window.servicePilot.saveSettings(next);
+      await window.servicePilot.settings.save(next);
       // 用保存后的值刷新表单（去掉首尾空格）
       setSettingsForm(buildSettingsForm(next));
       setFeedback({
@@ -2416,7 +2181,7 @@ export function App() {
         message: copy.updateInstalling,
         tone: 'info'
       });
-      await window.servicePilot.installUpdate();
+      await window.servicePilot.app.installUpdate();
     });
   }
 
@@ -2424,13 +2189,13 @@ export function App() {
     if (!serviceForm) {
       return;
     }
-    const picked = await window.servicePilot.pickDirectory(serviceForm.workingDir || undefined);
+    const picked = await window.servicePilot.dialog.pickDirectory(serviceForm.workingDir || undefined);
     if (!picked) {
       return;
     }
 
     try {
-      const detected = await window.servicePilot.detectProject(picked);
+      const detected = await window.servicePilot.services.detectProject(picked);
       setServiceForm((current) => {
         if (!current) {
           return current;
@@ -2524,23 +2289,9 @@ export function App() {
 
     if (isSimpleDirectoryImportForm(serviceForm)) {
       await runAction('import-project-service', async () => {
-        const service = await window.servicePilot.importProject(serviceForm.workingDir.trim());
-
-        // 保存分组关系
+        const service = await window.servicePilot.services.importProject(serviceForm.workingDir.trim());
         if (serviceForm.groupIds.length > 0) {
-          const targetGroupIds = new Set(serviceForm.groupIds);
-          for (const group of snapshot.groups) {
-            const shouldInclude = targetGroupIds.has(group.id);
-            if (!shouldInclude) {
-              continue;
-            }
-
-            await window.servicePilot.saveGroup({
-              id: group.id,
-              name: group.name,
-              serviceIds: [...group.serviceIds, service.id]
-            });
-          }
+          await window.servicePilot.groups.setServiceMembership(service.id, serviceForm.groupIds);
         }
 
         setSelectedLogServiceId(service.id);
@@ -2585,27 +2336,8 @@ export function App() {
     };
 
     await runAction(`save-service-${payload.id ?? 'new'}`, async () => {
-      const saved = await window.servicePilot.saveService(payload);
-
-      // 保存分组关系
-      if (serviceForm.groupIds.length > 0) {
-        const targetGroupIds = new Set(serviceForm.groupIds);
-        for (const group of snapshot.groups) {
-          const currentlyIncluded = group.serviceIds.includes(saved.id);
-          const shouldInclude = targetGroupIds.has(group.id);
-          if (currentlyIncluded === shouldInclude) {
-            continue;
-          }
-
-          await window.servicePilot.saveGroup({
-            id: group.id,
-            name: group.name,
-            serviceIds: shouldInclude
-              ? [...group.serviceIds, saved.id]
-              : group.serviceIds.filter((id) => id !== saved.id)
-          });
-        }
-      }
+      const saved = await window.servicePilot.services.save(payload);
+      await window.servicePilot.groups.setServiceMembership(saved.id, serviceForm.groupIds);
 
       setServiceForm(null);
     });
@@ -2623,7 +2355,7 @@ export function App() {
     };
 
     await runAction(`save-group-${payload.id ?? 'new'}`, async () => {
-      const saved = await window.servicePilot.saveGroup(payload);
+      const saved = await window.servicePilot.groups.save(payload);
       setGroupForm(null);
       setSelectedWorkspaceGroupId(saved.id);
     });
@@ -2638,38 +2370,21 @@ export function App() {
     if (!serviceGroupForm) {
       return;
     }
-
-    const targetGroupIds = new Set(serviceGroupForm.groupIds);
     await runAction(`service-groups-${serviceGroupForm.serviceId}`, async () => {
-      for (const group of snapshot.groups) {
-        const currentlyIncluded = group.serviceIds.includes(serviceGroupForm.serviceId);
-        const shouldInclude = targetGroupIds.has(group.id);
-        if (currentlyIncluded === shouldInclude) {
-          continue;
-        }
-
-        await window.servicePilot.saveGroup({
-          id: group.id,
-          name: group.name,
-          serviceIds: shouldInclude
-            ? [...group.serviceIds, serviceGroupForm.serviceId]
-            : group.serviceIds.filter((serviceId) => serviceId !== serviceGroupForm.serviceId)
-        });
-      }
-
+      await window.servicePilot.groups.setServiceMembership(serviceGroupForm.serviceId, serviceGroupForm.groupIds);
       setServiceGroupForm(null);
     });
   }
 
   async function handleMoveGroup(groupId: string, targetIndex: number) {
-    await runAction(`move-group-${groupId}-${targetIndex}`, () => window.servicePilot.moveGroup(groupId, targetIndex));
+    await runAction(`move-group-${groupId}-${targetIndex}`, () => window.servicePilot.groups.move(groupId, targetIndex));
   }
 
   async function handleBatchStart() {
     const targets = filteredServices.filter((service) => !['running', 'starting', 'stopping'].includes(getRuntime(snapshot, service.id).status));
     await runAction('batch-start', async () => {
       clearServiceLogsForLaunch(targets.map((service) => service.id));
-      await Promise.allSettled(targets.map((service) => window.servicePilot.startService(service.id)));
+      await Promise.allSettled(targets.map((service) => window.servicePilot.services.start(service.id)));
     });
   }
 
@@ -2680,7 +2395,7 @@ export function App() {
     });
     await runAction('batch-stop', async () => {
       for (const service of targets) {
-        await window.servicePilot.stopService(service.id);
+        await window.servicePilot.services.stop(service.id);
       }
     });
   }
@@ -2688,7 +2403,7 @@ export function App() {
   function handleRestartService(serviceId: string) {
     void runAction(`restart-${serviceId}`, async () => {
       clearServiceLogsForLaunch([serviceId]);
-      await window.servicePilot.restartService(serviceId);
+      await window.servicePilot.services.restart(serviceId);
     });
   }
 
@@ -2717,7 +2432,7 @@ export function App() {
       return;
     }
 
-    void window.servicePilot.startWindowDrag();
+    void window.servicePilot.window.startDrag();
   };
 
   const handleWindowTitleDoubleClick = (event: ReactMouseEvent<HTMLElement>) => {
@@ -2725,7 +2440,7 @@ export function App() {
       return;
     }
 
-    void window.servicePilot.toggleMaximizeWindow();
+    void window.servicePilot.window.toggleMaximize();
   };
 
   const blockWindowControlDrag = (event: ReactMouseEvent<HTMLElement>) => {
@@ -2784,7 +2499,7 @@ export function App() {
               aria-label="Minimize window"
               className="pilot-window-control"
               data-no-window-drag
-              onClick={() => void window.servicePilot.minimizeWindow()}
+              onClick={() => void window.servicePilot.window.minimize()}
               title={language === 'zh-CN' ? '最小化' : 'Minimize'}
               type="button"
             >
@@ -2794,7 +2509,7 @@ export function App() {
               aria-label="Maximize or restore window"
               className="pilot-window-control"
               data-no-window-drag
-              onClick={() => void window.servicePilot.toggleMaximizeWindow()}
+              onClick={() => void window.servicePilot.window.toggleMaximize()}
               title={language === 'zh-CN' ? '最大化/还原' : 'Maximize / Restore'}
               type="button"
             >
@@ -2959,12 +2674,12 @@ export function App() {
                                           `${hasRunningService ? 'stop' : 'start'}-group-${group.id}`,
                                           async () => {
                                             if (hasRunningService) {
-                                              await window.servicePilot.stopGroup(group.id);
+                                              await window.servicePilot.groups.stop(group.id);
                                               return;
                                             }
 
                                             clearServiceLogsForLaunch(group.serviceIds);
-                                            await window.servicePilot.startGroup(group.id);
+                                            await window.servicePilot.groups.start(group.id);
                                           }
                                         );
                                       }}
@@ -3323,7 +3038,7 @@ export function App() {
                                 kind="danger"
                                 label={copy.stop}
                                 onClick={() => {
-                                  void runAction(`stop-${service.id}`, () => window.servicePilot.stopService(service.id));
+                                  void runAction(`stop-${service.id}`, () => window.servicePilot.services.stop(service.id));
                                 }}
                               />
                             </>
@@ -3338,7 +3053,7 @@ export function App() {
                               onClick={() => {
                                 void runAction(`start-${service.id}`, async () => {
                                   clearServiceLogsForLaunch([service.id]);
-                                  await window.servicePilot.startService(service.id);
+                                  await window.servicePilot.services.start(service.id);
                                 });
                               }}
                             />
@@ -3539,20 +3254,37 @@ export function App() {
                         <span>{copy.autoScroll}</span>
                       </label>
 
-                      <ActionButton compact className="pilot-log-clear-button" icon="clearLogs" kind="default" label={copy.clearLogs} onClick={() => setLogsByService((current) => ({ ...current, [selectedLogServiceId]: [] }))} />
+                      <ActionButton
+                        compact
+                        className="pilot-log-clear-button"
+                        icon="clearLogs"
+                        kind="default"
+                        label={copy.clearLogs}
+                        onClick={() => {
+                          const serviceId = selectedLogServiceId;
+                          void runAction(`clear-log-${serviceId}`, async () => {
+                            await window.servicePilot.logs.clear(serviceId);
+                            setLogsByService((current) => ({ ...current, [serviceId]: [] }));
+                          });
+                        }}
+                      />
                     </div>
                   </div>
                 </header>
 
                 <div className="pilot-logs-card__body">
                   <div className="pilot-terminal">
-                    {logSearchHintText && <div className="pilot-log-search-summary">{logSearchHintText}</div>}
+                    {logSearchHintText && (
+                      <div className="pilot-log-search-summary">
+                        <span>{logSearchHintText}</span>
+                      </div>
+                    )}
                     <VirtualLogList
-                      items={filteredLogEntries}
+                      items={levelFilteredLogEntries}
                       searchQuery={deferredLogQuery}
                       activeSearchMatchId={activeLogMatchEntryId}
                       autoScroll={autoScroll}
-                      emptyTitle={hasLogQuery ? (language === 'zh-CN' ? '未找到匹配内容' : 'No matches') : copy.noLogs}
+                      emptyTitle={copy.noLogs}
                     />
                   </div>
                 </div>
@@ -3755,7 +3487,7 @@ export function App() {
                   const target = deleteServiceTarget;
                   setDeleteServiceTarget(null);
                   void runAction(`delete-${target.id}`, async () => {
-                    await window.servicePilot.deleteService(target.id);
+                    await window.servicePilot.services.delete(target.id);
                     await refreshSnapshot();
                     // 清理已删除服务的日志缓存，释放内存
                     setLogsByService((current) => {
@@ -3864,6 +3596,7 @@ export function App() {
               {scanResults.length > 0 && (
                 <ModalButton
                   disabled={busyKey !== '' || scanSelected.size === 0}
+                  icon="arrowDown"
                   kind="primary"
                   label={`${copy.importSelected} (${scanSelected.size})`}
                   onClick={() => void handleBatchImportSelected()}
@@ -3891,7 +3624,7 @@ export function App() {
               <ModalButton
                 kind="danger"
                 label={language === 'zh-CN' ? '退出' : 'Exit'}
-                onClick={() => void window.servicePilot.exitApp()}
+                onClick={() => void window.servicePilot.app.exit()}
               />
             </div>
           </div>
@@ -3979,7 +3712,7 @@ export function App() {
                   label={copy.deleteGroup}
                   onClick={() => {
                     void runAction(`delete-group-${groupForm.id}`, async () => {
-                      await window.servicePilot.deleteGroup(groupForm.id!);
+                      await window.servicePilot.groups.delete(groupForm.id!);
                       setGroupForm(null);
                       if (selectedGroup === groupForm.id) {
                         setSelectedGroup('all');
