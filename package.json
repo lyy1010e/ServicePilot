@@ -1,6 +1,6 @@
 {
   "name": "service-pilot",
-  "version": "1.0.10",
+  "version": "1.0.11",
   "private": true,
   "description": "Desktop manager for local Spring Boot and Vue development services.",
   "scripts": {
