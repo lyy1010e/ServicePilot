@@ -122,14 +122,18 @@ impl ServicePilotBackend {
     async fn detect_access_info(&self, service_id: &str, text: &str) {
         let mut notice = None;
         let mut changed = false;
+        let detected_url = extract_url(text);
+        let detected_port = extract_port(text);
         {
             let mut inner = self.inner.lock().await;
+            let service_kind = inner
+                .services
+                .iter()
+                .find(|service| service.id == service_id)
+                .map(|service| service.service_kind.clone());
             let Some(runtime) = inner.runtime.get_mut(service_id) else {
                 return;
             };
-
-            let detected_url = extract_url(text);
-            let detected_port = extract_port(text);
 
             if detected_url.is_some() && runtime.detected_url != detected_url {
                 runtime.detected_url = detected_url.clone();
@@ -139,6 +143,18 @@ impl ServicePilotBackend {
             if detected_port.is_some() && runtime.detected_port != detected_port {
                 runtime.detected_port = detected_port;
                 changed = true;
+            }
+
+            if let Some(service_kind) = service_kind {
+                if is_spring_startup_access_signal(
+                    &runtime.status,
+                    &service_kind,
+                    detected_url.as_deref(),
+                    detected_port,
+                ) {
+                    runtime.status = RuntimeStatus::Running;
+                    changed = true;
+                }
             }
 
             if let Some(url) = detected_url {

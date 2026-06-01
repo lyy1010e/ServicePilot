@@ -11,6 +11,21 @@ pub(crate) struct AppUpdateInfo {
     pub(crate) date: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum AppUpdatePhase {
+    Downloading,
+    Installing,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AppUpdateProgress {
+    pub(crate) phase: AppUpdatePhase,
+    pub(crate) downloaded: u64,
+    pub(crate) total: Option<u64>,
+}
+
 #[derive(Clone)]
 pub(crate) struct AppState {
     pub(crate) backend: Arc<ServicePilotBackend>,

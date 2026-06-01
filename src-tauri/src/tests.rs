@@ -304,3 +304,31 @@ fn spring_started_line_matches_standard_and_service_specific_logs() {
         Some("com.azt.easysign.capf.seal.service.CapfSealServiceApplication")
     ));
 }
+
+#[test]
+fn spring_startup_access_signal_marks_only_starting_spring_services_ready() {
+    assert!(is_spring_startup_access_signal(
+        &RuntimeStatus::Starting,
+        &ServiceKind::Spring,
+        None,
+        Some(9001)
+    ));
+    assert!(is_spring_startup_access_signal(
+        &RuntimeStatus::Starting,
+        &ServiceKind::Spring,
+        Some("http://localhost:9001"),
+        None
+    ));
+    assert!(!is_spring_startup_access_signal(
+        &RuntimeStatus::Running,
+        &ServiceKind::Spring,
+        None,
+        Some(9001)
+    ));
+    assert!(!is_spring_startup_access_signal(
+        &RuntimeStatus::Starting,
+        &ServiceKind::Vue,
+        None,
+        Some(5173)
+    ));
+}

@@ -383,8 +383,37 @@ pub(crate) async fn app_install_update(
 
     // 停止服务失败不应阻止更新
     let _ = state.backend.shutdown().await;
+    let progress_app = app.clone();
+    let finished_app = app.clone();
+    let downloaded = Arc::new(AtomicU64::new(0));
+    let progress_downloaded = downloaded.clone();
+    let finished_downloaded = downloaded.clone();
     update
-        .download_and_install(|_, _| {}, || {})
+        .download_and_install(
+            move |chunk_length, content_length| {
+                let downloaded = progress_downloaded
+                    .fetch_add(chunk_length as u64, Ordering::Relaxed)
+                    .saturating_add(chunk_length as u64);
+                let _ = progress_app.emit(
+                    "update:progress",
+                    AppUpdateProgress {
+                        phase: AppUpdatePhase::Downloading,
+                        downloaded,
+                        total: content_length,
+                    },
+                );
+            },
+            move || {
+                let _ = finished_app.emit(
+                    "update:progress",
+                    AppUpdateProgress {
+                        phase: AppUpdatePhase::Installing,
+                        downloaded: finished_downloaded.load(Ordering::Relaxed),
+                        total: None,
+                    },
+                );
+            },
+        )
         .await
         .map_err(|error| {
             eprintln!("[ServicePilot] install_update download_and_install error: {error}");

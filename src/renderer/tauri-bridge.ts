@@ -2,6 +2,7 @@ import type {
   AppSettings,
   AppSnapshot,
   AppUpdateInfo,
+  AppUpdateProgress,
   BatchImportItem,
   LogEntry,
   ProjectDetection,
@@ -149,7 +150,8 @@ export function createServicePilotApi(): ServicePilotApi {
     },
     events: {
       onSnapshot: (listener) => wrapListener<AppSnapshot>('snapshot:update', listener),
-      onLogEntry: (listener) => wrapListener<LogEntry>('log:entry', listener)
+      onLogEntry: (listener) => wrapListener<LogEntry>('log:entry', listener),
+      onUpdateProgress: (listener) => wrapListener<AppUpdateProgress>('update:progress', listener)
     }
   };
 }

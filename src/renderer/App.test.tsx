@@ -98,7 +98,8 @@ function createMockApi(initialSnapshot: AppSnapshot): ServicePilotApi {
     },
     events: {
       onSnapshot: vi.fn().mockReturnValue(vi.fn()),
-      onLogEntry: vi.fn().mockReturnValue(vi.fn())
+      onLogEntry: vi.fn().mockReturnValue(vi.fn()),
+      onUpdateProgress: vi.fn().mockReturnValue(vi.fn())
     }
   };
 }
@@ -209,6 +210,56 @@ describe('App service flows', () => {
     await waitFor(() => expect(api.services.start).toHaveBeenCalledWith('svc-1'));
   });
 
+  it('reloads logs for non-selected services after batch start clears launch logs', async () => {
+    const gateway = springService({ id: 'svc-gateway', name: 'Gateway' });
+    const billing = springService({
+      id: 'svc-billing',
+      name: 'Billing',
+      workingDir: 'D:\\workspace\\billing',
+      mainClass: 'com.example.BillingApplication',
+      port: 9001
+    });
+    const billingLog: LogEntry = {
+      id: 'billing-log-1',
+      serviceId: billing.id,
+      timestamp: '2026-05-20T07:20:00.000Z',
+      source: 'stdout',
+      text: 'Billing started on port 9001'
+    };
+    const { api, user } = await renderApp(
+      snapshot({
+        services: [gateway, billing],
+        runtime: {
+          [gateway.id]: {
+            serviceId: gateway.id,
+            status: 'stopped'
+          },
+          [billing.id]: {
+            serviceId: billing.id,
+            status: 'stopped'
+          }
+        }
+      }),
+      (nextApi) => {
+        vi.mocked(nextApi.logs.history).mockImplementation((serviceId) =>
+          Promise.resolve(serviceId === billing.id ? [billingLog] : [])
+        );
+      }
+    );
+
+    await waitFor(() => expect(api.logs.history).toHaveBeenCalledWith(gateway.id));
+
+    await user.click(screen.getByRole('button', { name: 'Batch Start' }));
+
+    await waitFor(() => expect(api.services.start).toHaveBeenCalledWith(gateway.id));
+    await waitFor(() => expect(api.services.start).toHaveBeenCalledWith(billing.id));
+
+    await user.click(screen.getByRole('button', { name: /Billing/ }));
+
+    await waitFor(() => expect(api.logs.history).toHaveBeenCalledWith(billing.id));
+    expect(await screen.findByText(/Billing started/)).toBeInTheDocument();
+  });
+
   it('removes duplicate application timestamps from log messages', () => {
     expect(
       getLogMessage({
@@ -219,6 +270,16 @@ describe('App service flows', () => {
         text: '2026-05-20 15:20:00.029  INFO 29768 --- [scheduling-1] c.a.Task : started'
       })
     ).toBe('29768 --- [scheduling-1] c.a.Task : started');
+
+    expect(
+      getLogMessage({
+        id: 'log-2',
+        serviceId: 'svc-1',
+        timestamp: '2026-06-01T05:45:31.120Z',
+        source: 'stdout',
+        text: '2026-06-01 13:45:31.120|INFO|com.azt.easysign.capf.seal.service.CapfSealServiceApplication|main|main|34|capf-seal服务启动成功'
+      })
+    ).toBe('com.azt.easysign.capf.seal.service.CapfSealServiceApplication|main|main|34|capf-seal服务启动成功');
   });
 
   it('searches within the full log context and keeps surrounding lines visible', async () => {
@@ -324,7 +385,7 @@ describe('App service flows', () => {
     start.resolve();
   });
 
-  it('opens the update confirmation from the header update button', async () => {
+  it('opens the compact update prompt from the header update button', async () => {
     const { api, user } = await renderApp(snapshot());
     vi.mocked(api.app.checkUpdate).mockResolvedValue({
       version: '1.0.6',
@@ -335,10 +396,16 @@ describe('App service flows', () => {
 
     await waitFor(() => expect(api.app.checkUpdate).toHaveBeenCalled(), { timeout: 5000 });
 
+    expect(screen.getByText('ServicePilot update available')).toBeInTheDocument();
+    expect(screen.getByText(/Version 1\.0\.6 is ready to download/)).toBeInTheDocument();
+    expect(screen.getByText(/Added release notes in updater/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Later' }));
+    expect(screen.queryByText('ServicePilot update available')).not.toBeInTheDocument();
+
     await user.click(screen.getByRole('button', { name: 'Update Now' }));
 
-    expect(screen.getByText(/Update directly to ServicePilot 1\.0\.6/)).toBeInTheDocument();
-    expect(screen.getByText(/Added release notes in updater/)).toBeInTheDocument();
+    expect(screen.getByText('ServicePilot update available')).toBeInTheDocument();
     expect(api.window.startDrag).not.toHaveBeenCalled();
 
     const updateButtons = screen.getAllByRole('button', { name: 'Update Now' });

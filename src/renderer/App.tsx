@@ -4,6 +4,7 @@ import type {
   AppLanguage,
   AppSnapshot,
   AppUpdateInfo,
+  AppUpdateProgress,
   BatchImportItem,
   LogEntry,
   RuntimeState,
@@ -270,8 +271,14 @@ type Copy = {
   logLoadFailed: string;
   installUpdate: string;
   updateAvailable: (version: string) => string;
+  updateReadyTitle: string;
+  updateReadyDesc: (version: string) => string;
+  updateLater: string;
+  updateDownloading: string;
+  updateDownloadPreparing: string;
+  updateDownloadProgress: (percent: number) => string;
+  updateInstallingStatus: string;
   updateInstalling: string;
-  updateInstallConfirm: (version: string) => string;
   scanImport: string;
   scanningServices: string;
   detectedServices: (count: number) => string;
@@ -424,8 +431,14 @@ const COPY: Record<AppLanguage, Copy> = {
     logLoadFailed: '读取日志失败。',
     installUpdate: '立即更新',
     updateAvailable: (version) => `发现新版本 ${version}。`,
+    updateReadyTitle: 'ServicePilot 有新版本',
+    updateReadyDesc: (version) => `版本 ${version} 已准备好下载，更新前会停止正在运行的服务。`,
+    updateLater: '稍后',
+    updateDownloading: '正在下载更新',
+    updateDownloadPreparing: '正在连接更新服务...',
+    updateDownloadProgress: (percent) => `已下载 ${percent}%`,
+    updateInstallingStatus: '正在安装更新',
     updateInstalling: '正在下载更新并应用，完成后应用会自动重启。',
-    updateInstallConfirm: (version) => `将直接更新到 ServicePilot ${version}，更新前会停止正在运行的服务。继续吗？`,
     scanImport: '扫描导入',
     scanningServices: '扫描中...',
     detectedServices: (count) => `检测到 ${count} 个 Spring Boot 服务`,
@@ -577,8 +590,14 @@ const COPY: Record<AppLanguage, Copy> = {
     logLoadFailed: 'Failed to load logs.',
     installUpdate: 'Update Now',
     updateAvailable: (version) => `Version ${version} is available.`,
+    updateReadyTitle: 'ServicePilot update available',
+    updateReadyDesc: (version) => `Version ${version} is ready to download. Running services will be stopped first.`,
+    updateLater: 'Later',
+    updateDownloading: 'Downloading update',
+    updateDownloadPreparing: 'Connecting to update service...',
+    updateDownloadProgress: (percent) => `Downloaded ${percent}%`,
+    updateInstallingStatus: 'Installing update',
     updateInstalling: 'Downloading and applying the update. The app will restart when it is done.',
-    updateInstallConfirm: (version) => `Update directly to ServicePilot ${version}? Running services will be stopped first.`,
     scanImport: 'Scan & Import',
     scanningServices: 'Scanning...',
     detectedServices: (count) => `Detected ${count} Spring Boot services`,
@@ -1570,7 +1589,6 @@ export function App() {
   const [serviceGroupForm, setServiceGroupForm] = useState<ServiceGroupFormState | null>(null);
   const [deleteServiceTarget, setDeleteServiceTarget] = useState<ServiceConfig | null>(null);
   const [exitConfirmOpen, setExitConfirmOpen] = useState(false);
-  const [updateConfirmOpen, setUpdateConfirmOpen] = useState(false);
   const [settingsForm, setSettingsForm] = useState<SettingsFormState>(() =>
     buildSettingsForm({ language: 'zh-CN', mavenSettingsFile: '', mavenLocalRepository: '', clearLogsOnRestart: true })
   );
@@ -1578,6 +1596,8 @@ export function App() {
   const [busyKey, setBusyKey] = useState('');
   const [appVersion, setAppVersion] = useState('1.0.0');
   const [updateInfo, setUpdateInfo] = useState<AppUpdateInfo | null>(null);
+  const [updatePromptOpen, setUpdatePromptOpen] = useState(false);
+  const [updateProgress, setUpdateProgress] = useState<AppUpdateProgress | null>(null);
   const [scanModalOpen, setScanModalOpen] = useState(false);
   const [scanResults, setScanResults] = useState<ScannedService[]>([]);
   const [scanSelected, setScanSelected] = useState<Set<string>>(new Set());
@@ -1662,11 +1682,15 @@ export function App() {
         .then((nextUpdate) => {
           if (!disposed) {
             setUpdateInfo(nextUpdate);
+            setUpdatePromptOpen(Boolean(nextUpdate));
+            setUpdateProgress(null);
           }
         })
         .catch(() => {
           if (!disposed) {
             setUpdateInfo(null);
+            setUpdatePromptOpen(false);
+            setUpdateProgress(null);
           }
         });
     }, 3000);
@@ -1723,6 +1747,11 @@ export function App() {
       });
     });
 
+    const offUpdateProgress = window.servicePilot.events.onUpdateProgress((progress) => {
+      setUpdatePromptOpen(true);
+      setUpdateProgress(progress);
+    });
+
     const offCloseRequested = window.servicePilot.window.onCloseRequested(() => {
       handleCloseAttempt();
     });
@@ -1731,6 +1760,7 @@ export function App() {
       disposed = true;
       offSnapshot();
       offLog();
+      offUpdateProgress();
       offCloseRequested();
     };
   }, [copy.initFailed]);
@@ -1967,6 +1997,18 @@ export function App() {
     }
     return snapshot.services.filter((service) => selectedGroupEntity.serviceIds.includes(service.id));
   }, [selectedGroupEntity, snapshot.services]);
+  const updateDownloadPercent = useMemo(() => {
+    if (!updateProgress?.total) {
+      return null;
+    }
+    return Math.min(100, Math.max(0, Math.round((updateProgress.downloaded / updateProgress.total) * 100)));
+  }, [updateProgress]);
+  const isInstallingUpdate = busyKey === 'install-update';
+  const updateStatusText = updateProgress?.phase === 'installing'
+    ? copy.updateInstalling
+    : updateDownloadPercent !== null
+      ? copy.updateDownloadProgress(updateDownloadPercent)
+      : copy.updateDownloadPreparing;
 
   async function runAction(key: string, action: () => Promise<void>) {
     try {
@@ -2171,18 +2213,29 @@ export function App() {
     if (!updateInfo) {
       return;
     }
-    setUpdateConfirmOpen(true);
+    setUpdatePromptOpen(true);
   }
 
   async function confirmInstallUpdate() {
-    setUpdateConfirmOpen(false);
-    await runAction('install-update', async () => {
-      setFeedback({
-        message: copy.updateInstalling,
-        tone: 'info'
-      });
+    if (!updateInfo) {
+      return;
+    }
+    setUpdatePromptOpen(true);
+    setUpdateProgress({ phase: 'downloading', downloaded: 0, total: null });
+    try {
+      setBusyKey('install-update');
+      setFeedback(null);
       await window.servicePilot.app.installUpdate();
-    });
+    } catch (error) {
+      setUpdateProgress(null);
+      setUpdatePromptOpen(false);
+      setFeedback({
+        message: getActionErrorMessage(error, copy.actionFailed),
+        tone: 'error'
+      });
+    } finally {
+      setBusyKey('');
+    }
   }
 
   async function handlePickDirectory() {
@@ -2414,8 +2467,13 @@ export function App() {
 
     setLogsByService((current) => {
       const next = { ...current };
+      const selectedId = selectedLogServiceIdRef.current;
       for (const serviceId of serviceIds) {
-        next[serviceId] = [];
+        if (serviceId === selectedId) {
+          next[serviceId] = [];
+        } else {
+          delete next[serviceId];
+        }
       }
       return next;
     });
@@ -3631,34 +3689,49 @@ export function App() {
         </div>
       )}
 
-      {updateConfirmOpen && updateInfo && (
-        <div className="modal-overlay">
-          <div className="modal confirm modal-update">
-            <div className="modal-header">
-              <div>
-                <div className="modal-title">{copy.installUpdate}</div>
-                <div className="modal-desc">{copy.updateInstallConfirm(updateInfo.version)}</div>
-              </div>
-              <button className="modal-close" aria-label={copy.cancel} onClick={() => setUpdateConfirmOpen(false)} type="button">
-                ×
-              </button>
+      {updateInfo && updatePromptOpen && (
+        <div className={`pilot-update-card ${isInstallingUpdate ? 'pilot-update-card--busy' : ''}`}>
+          <div className="pilot-update-card__icon" aria-hidden="true">
+            <AppIcon icon={isInstallingUpdate ? 'starting' : 'arrowUp'} size={17} />
+          </div>
+          <div className="pilot-update-card__content">
+            <div className="pilot-update-card__eyebrow">ServicePilot</div>
+            <div className="pilot-update-card__title">
+              {updateProgress?.phase === 'installing'
+                ? copy.updateInstallingStatus
+                : isInstallingUpdate
+                  ? copy.updateDownloading
+                  : copy.updateReadyTitle}
             </div>
-            {updateInfo.notes?.trim() && (
-              <div className="modal-body">
-                <div className="update-notes" aria-label="Release notes">
-                  <pre>{updateInfo.notes.trim()}</pre>
-                </div>
+            <div className="pilot-update-card__desc">
+              {isInstallingUpdate ? updateStatusText : copy.updateReadyDesc(updateInfo.version)}
+            </div>
+            {!isInstallingUpdate && updateInfo.notes?.trim() && (
+              <div className="pilot-update-card__notes">{updateInfo.notes.trim()}</div>
+            )}
+            {isInstallingUpdate && (
+              <div
+                aria-label={updateStatusText}
+                aria-valuemax={100}
+                aria-valuemin={0}
+                aria-valuenow={updateDownloadPercent ?? undefined}
+                className={`pilot-update-card__progress ${updateDownloadPercent === null ? 'pilot-update-card__progress--indeterminate' : ''}`}
+                role="progressbar"
+              >
+                <span style={{ width: `${updateDownloadPercent ?? 32}%` }} />
               </div>
             )}
-            <div className="modal-footer">
-              <ModalButton label={copy.cancel} onClick={() => setUpdateConfirmOpen(false)} />
-              <ModalButton
-                kind="primary"
-                label={copy.installUpdate}
-                onClick={() => void confirmInstallUpdate()}
-              />
-            </div>
           </div>
+          {!isInstallingUpdate && (
+            <div className="pilot-update-card__actions">
+              <button className="pilot-update-card__secondary" onClick={() => setUpdatePromptOpen(false)} type="button">
+                {copy.updateLater}
+              </button>
+              <button className="pilot-update-card__primary" onClick={() => void confirmInstallUpdate()} type="button">
+                {copy.installUpdate}
+              </button>
+            </div>
+          )}
         </div>
       )}
 

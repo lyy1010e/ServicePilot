@@ -378,6 +378,17 @@ pub(crate) fn is_spring_started_line(
         .is_some_and(|simple_name| line_lower.contains(simple_name))
 }
 
+pub(crate) fn is_spring_startup_access_signal(
+    status: &RuntimeStatus,
+    service_kind: &ServiceKind,
+    detected_url: Option<&str>,
+    detected_port: Option<u16>,
+) -> bool {
+    matches!(status, RuntimeStatus::Starting)
+        && matches!(service_kind, ServiceKind::Spring)
+        && (detected_url.is_some() || detected_port.is_some())
+}
+
 pub(crate) fn is_exception_start(text: &str) -> bool {
     let Some(first) = text.split_whitespace().next() else {
         return false;

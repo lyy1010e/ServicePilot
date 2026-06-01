@@ -113,6 +113,12 @@ export interface AppUpdateInfo {
   date?: string | null;
 }
 
+export interface AppUpdateProgress {
+  phase: 'downloading' | 'installing';
+  downloaded: number;
+  total?: number | null;
+}
+
 export interface SaveGroupInput extends Omit<ServiceGroup, 'id'> {
   id?: string;
 }
@@ -208,4 +214,5 @@ export interface WindowApi {
 export interface EventApi {
   onSnapshot: (listener: (snapshot: AppSnapshot) => void) => () => void;
   onLogEntry: (listener: (entry: LogEntry) => void) => () => void;
+  onUpdateProgress: (listener: (progress: AppUpdateProgress) => void) => () => void;
 }
