@@ -1573,6 +1573,7 @@ export function App() {
   const [logsByService, setLogsByService] = useState<Record<string, LogEntry[]>>({});
   const [selectedGroup, setSelectedGroup] = useState<GroupSelection>('all');
   const [serviceSearch, setServiceSearch] = useState('');
+  const [selectedServiceIds, setSelectedServiceIds] = useState<Set<string>>(new Set());
   const [selectedLogServiceId, setSelectedLogServiceId] = useState('');
   const [logQuery, setLogQuery] = useState('');
   const [logMatchIndex, setLogMatchIndex] = useState(0);
@@ -1986,6 +1987,42 @@ export function App() {
       return searchHaystack.includes(deferredServiceSearch);
     });
   }, [copy.ungrouped, deferredServiceSearch, selectedGroup, snapshot.groups, snapshot.services]);
+  const selectedVisibleServiceIds = useMemo(
+    () => filteredServices.filter((service) => selectedServiceIds.has(service.id)).map((service) => service.id),
+    [filteredServices, selectedServiceIds]
+  );
+  const batchScopeServices = useMemo(
+    () =>
+      selectedVisibleServiceIds.length
+        ? filteredServices.filter((service) => selectedServiceIds.has(service.id))
+        : filteredServices,
+    [filteredServices, selectedServiceIds, selectedVisibleServiceIds.length]
+  );
+  const batchStartTargetCount = useMemo(
+    () =>
+      batchScopeServices.filter(
+        (service) => !['running', 'starting', 'stopping'].includes(getRuntime(snapshot, service.id).status)
+      ).length,
+    [batchScopeServices, snapshot]
+  );
+  const batchStopTargetCount = useMemo(
+    () =>
+      batchScopeServices.filter((service) => {
+        const status = getRuntime(snapshot, service.id).status;
+        return status === 'running' || status === 'starting' || status === 'stopping';
+      }).length,
+    [batchScopeServices, snapshot]
+  );
+  const allVisibleServicesSelected =
+    filteredServices.length > 0 && selectedVisibleServiceIds.length === filteredServices.length;
+
+  useEffect(() => {
+    const visibleIds = new Set(filteredServices.map((service) => service.id));
+    setSelectedServiceIds((current) => {
+      const next = new Set([...current].filter((serviceId) => visibleIds.has(serviceId)));
+      return next.size === current.size ? current : next;
+    });
+  }, [filteredServices]);
 
   const selectedGroupEntity = useMemo(
     () => snapshot.groups.find((group) => group.id === selectedWorkspaceGroupId),
@@ -2149,6 +2186,22 @@ export function App() {
     } else {
       setScanSelected(new Set(scanResults.map((s) => s.workingDir)));
     }
+  }
+
+  function handleToggleServiceSelected(serviceId: string, checked: boolean) {
+    setSelectedServiceIds((current) => {
+      const next = new Set(current);
+      if (checked) {
+        next.add(serviceId);
+      } else {
+        next.delete(serviceId);
+      }
+      return next;
+    });
+  }
+
+  function handleToggleFilteredServices(checked: boolean) {
+    setSelectedServiceIds(checked ? new Set(filteredServices.map((service) => service.id)) : new Set());
   }
 
   async function handleBatchImportSelected() {
@@ -2434,7 +2487,10 @@ export function App() {
   }
 
   async function handleBatchStart() {
-    const targets = filteredServices.filter((service) => !['running', 'starting', 'stopping'].includes(getRuntime(snapshot, service.id).status));
+    const targets = batchScopeServices.filter((service) => !['running', 'starting', 'stopping'].includes(getRuntime(snapshot, service.id).status));
+    if (!targets.length) {
+      return;
+    }
     await runAction('batch-start', async () => {
       clearServiceLogsForLaunch(targets.map((service) => service.id));
       await Promise.allSettled(targets.map((service) => window.servicePilot.services.start(service.id)));
@@ -2442,10 +2498,13 @@ export function App() {
   }
 
   async function handleBatchStop() {
-    const targets = filteredServices.filter((service) => {
+    const targets = batchScopeServices.filter((service) => {
       const status = getRuntime(snapshot, service.id).status;
       return status === 'running' || status === 'starting' || status === 'stopping';
     });
+    if (!targets.length) {
+      return;
+    }
     await runAction('batch-stop', async () => {
       for (const service of targets) {
         await window.servicePilot.services.stop(service.id);
@@ -2997,21 +3056,21 @@ export function App() {
                   <div className="batch-menu-wrap">
                     <button
                       className="action-button action-button--success action-button--compact"
-                      disabled={busyKey !== ''}
+                      disabled={busyKey !== '' || batchStartTargetCount === 0}
                       onClick={() => void handleBatchStart()}
                       type="button"
                     >
                       <AppIcon icon="batchStart" size={16} />
-                      <span>{copy.batchStart}</span>
+                      <span>{selectedVisibleServiceIds.length ? `${copy.batchStart} (${batchStartTargetCount})` : copy.batchStart}</span>
                     </button>
                     <button
                       className="action-button action-button--danger action-button--compact"
-                      disabled={busyKey !== ''}
+                      disabled={busyKey !== '' || batchStopTargetCount === 0}
                       onClick={() => void handleBatchStop()}
                       type="button"
                     >
                       <AppIcon icon="stop" size={16} />
-                      <span>{copy.batchStop}</span>
+                      <span>{selectedVisibleServiceIds.length ? `${copy.batchStop} (${batchStopTargetCount})` : copy.batchStop}</span>
                     </button>
                   </div>
                   <ActionButton compact className="action-button--add-service" icon="addService" kind="primary" label={copy.addService} onClick={() => void handleScanImport()} />
@@ -3021,6 +3080,15 @@ export function App() {
               <section className="pilot-table-card">
                 <div className="pilot-table-card__body">
                   <header className="pilot-table-card__header">
+                    <label className="pilot-table-card__select-head" title={copy.selectAll}>
+                      <input
+                        aria-label={copy.selectAll}
+                        checked={allVisibleServicesSelected}
+                        disabled={!filteredServices.length}
+                        onChange={(event) => handleToggleFilteredServices(event.target.checked)}
+                        type="checkbox"
+                      />
+                    </label>
                     <span>{copy.serviceName}</span>
                     <span>{copy.group}</span>
                     <span>{copy.status}</span>
@@ -3036,13 +3104,26 @@ export function App() {
                     const serviceGroups = getServiceGroups(snapshot.groups, service.id);
                     const servicePort = resolveRuntimePort(service, runtime);
                     const serviceCanStop = canStopRuntime(runtime.status);
+                    const isServiceSelected = selectedServiceIds.has(service.id);
 
                     return (
                       <article
-                        className={`service-row service-row--${tone} ${selectedLogServiceId === service.id ? 'service-row--active' : ''}`}
+                        className={`service-row service-row--${tone} ${isServiceSelected ? 'service-row--selected' : ''} ${selectedLogServiceId === service.id ? 'service-row--active' : ''}`}
                         key={service.id}
                         onClick={() => setSelectedLogServiceId(service.id)}
                       >
+                        <label
+                          className="service-row__select"
+                          onClick={(event) => event.stopPropagation()}
+                          title={service.name}
+                        >
+                          <input
+                            aria-label={`Select ${service.name}`}
+                            checked={isServiceSelected}
+                            onChange={(event) => handleToggleServiceSelected(service.id, event.target.checked)}
+                            type="checkbox"
+                          />
+                        </label>
                         <div className="service-row__name">
                           <ServiceTechIcon index={index} service={service} />
                           <span className="service-row__name-text" title={service.name}>{service.name}</span>

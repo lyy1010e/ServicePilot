@@ -1678,6 +1678,7 @@ textarea {
   display: grid;
   grid-template-rows: minmax(0, 1fr);
   --service-table-columns:
+    34px
     minmax(220px, 1.45fr)
     minmax(140px, 1fr)
     minmax(112px, 0.9fr)
@@ -1722,12 +1723,29 @@ textarea {
   min-width: 0;
 }
 
-.pilot-table-card__header span:nth-child(2) {
+.pilot-table-card__header span:nth-child(3) {
   padding-left: 12px;
 }
 
-.pilot-table-card__header span:nth-child(3) {
+.pilot-table-card__header span:nth-child(4) {
   padding-left: 16px;
+}
+
+.pilot-table-card__select-head,
+.service-row__select {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pilot-table-card__select-head input,
+.service-row__select input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--primary);
+  cursor: pointer;
 }
 
 .pilot-table-card__body {
@@ -1764,6 +1782,14 @@ textarea {
 
 .service-row:hover {
   background: rgba(23, 32, 51, 0.72);
+}
+
+.service-row--selected {
+  background: rgba(59, 130, 246, 0.08);
+}
+
+.service-row--selected:hover {
+  background: rgba(59, 130, 246, 0.12);
 }
 
 .service-row--active {
@@ -3571,6 +3597,10 @@ textarea {
   box-shadow: inset 2px 0 0 #3b82f6;
 }
 
+.pilot-app[data-theme='light'] .service-row--selected {
+  background: rgba(37, 99, 235, 0.06);
+}
+
 .pilot-app[data-theme='light'] .pilot-group-card,
 .pilot-app[data-theme='light'] .field input,
 .pilot-app[data-theme='light'] .field textarea,
@@ -3697,6 +3727,7 @@ textarea {
 @media (max-width: 1440px) {
   .pilot-table-card {
     --service-table-columns:
+      34px
       minmax(220px, 1.45fr)
       minmax(132px, 0.95fr)
       minmax(108px, 0.84fr)
@@ -3718,6 +3749,7 @@ textarea {
 
   .pilot-table-card {
     --service-table-columns:
+      34px
       minmax(220px, 1.35fr)
       minmax(118px, 0.82fr)
       minmax(96px, 0.72fr)
@@ -3771,6 +3803,10 @@ textarea {
   .service-row {
     grid-template-columns: 1fr;
     gap: 14px;
+  }
+
+  .service-row__select {
+    justify-content: flex-start;
   }
 
   .service-row__actions {
