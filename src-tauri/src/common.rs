@@ -100,6 +100,7 @@ pub(crate) fn default_settings() -> AppSettings {
         maven_settings_file: String::new(),
         maven_local_repository: String::new(),
         clear_logs_on_restart: true,
+        resume_services_on_launch: false,
     }
 }
 

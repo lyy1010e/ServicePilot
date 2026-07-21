@@ -12,11 +12,15 @@ impl ServicePilotBackend {
     }
 
     pub(crate) async fn save_settings(&self, settings: AppSettings) -> BackendResult<()> {
+        let resume_services_on_launch = settings.resume_services_on_launch;
         {
             let mut inner = self.inner.lock().await;
             inner.settings = settings;
         }
         self.persist_state().await?;
+        if !resume_services_on_launch {
+            self.clear_resume_state().await?;
+        }
         self.emit_snapshot().await;
         Ok(())
     }
@@ -80,7 +84,7 @@ impl ServicePilotBackend {
         let parsed =
             serde_json::from_str::<PersistedState>(&content).map_err(|error| error.to_string())?;
         self.validate_imported_state(&parsed).await?;
-        self.shutdown().await?;
+        self.shutdown_without_resume().await?;
 
         {
             let mut inner = self.inner.lock().await;

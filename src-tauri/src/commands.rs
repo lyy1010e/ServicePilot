@@ -382,7 +382,7 @@ pub(crate) async fn app_install_update(
     };
 
     // 停止服务失败不应阻止更新
-    let _ = state.backend.shutdown().await;
+    let _ = state.backend.shutdown_without_resume().await;
     let progress_app = app.clone();
     let finished_app = app.clone();
     let downloaded = Arc::new(AtomicU64::new(0));

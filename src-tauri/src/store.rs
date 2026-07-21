@@ -1,5 +1,49 @@
 use super::*;
 
+pub(crate) async fn save_resume_state_file(
+    resume_file: &Path,
+    service_ids: Vec<String>,
+) -> BackendResult<()> {
+    if service_ids.is_empty() {
+        return clear_resume_state_file(resume_file).await;
+    }
+    if let Some(parent) = resume_file.parent() {
+        fs::create_dir_all(parent)
+            .await
+            .map_err(|error| error.to_string())?;
+    }
+    let temporary_file = resume_file.with_extension(format!("{}.tmp", new_id()));
+    let content = serde_json::to_string(&ResumeState { service_ids })
+        .map_err(|error| error.to_string())?;
+    fs::write(&temporary_file, content)
+        .await
+        .map_err(|error| error.to_string())?;
+    if let Err(error) = fs::rename(&temporary_file, resume_file).await {
+        let _ = fs::remove_file(&temporary_file).await;
+        return Err(error.to_string());
+    }
+    Ok(())
+}
+
+pub(crate) async fn consume_resume_state_file(resume_file: &Path) -> BackendResult<Vec<String>> {
+    let content = match fs::read_to_string(resume_file).await {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error.to_string()),
+    };
+    clear_resume_state_file(resume_file).await?;
+    let state = serde_json::from_str::<ResumeState>(&content).map_err(|error| error.to_string())?;
+    Ok(state.service_ids)
+}
+
+pub(crate) async fn clear_resume_state_file(resume_file: &Path) -> BackendResult<()> {
+    match fs::remove_file(resume_file).await {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
 impl ServicePilotBackend {
     pub(crate) async fn new(app: AppHandle<Wry>) -> BackendResult<Self> {
         let user_data_path = app
@@ -8,9 +52,11 @@ impl ServicePilotBackend {
             .map_err(|error| format!("Failed to resolve app data directory: {error}"))?;
 
         let state_file = user_data_path.join(DATA_FILE);
+        let resume_file = user_data_path.join(RESUME_FILE);
         Ok(Self {
             app,
             state_file,
+            resume_file,
             last_snapshot_emitted: Arc::new(Mutex::new(std::time::Instant::now())),
             inner: Arc::new(Mutex::new(BackendState {
                 services: Vec::new(),
@@ -20,6 +66,7 @@ impl ServicePilotBackend {
                     maven_settings_file: String::new(),
                     maven_local_repository: String::new(),
                     clear_logs_on_restart: true,
+                    resume_services_on_launch: false,
                 },
                 runtime: HashMap::new(),
                 log_history: HashMap::new(),
@@ -100,6 +147,44 @@ impl ServicePilotBackend {
         fs::write(&self.state_file, content)
             .await
             .map_err(|error| error.to_string())
+    }
+
+    pub(crate) async fn save_resume_state(&self, service_ids: Vec<String>) -> BackendResult<()> {
+        save_resume_state_file(&self.resume_file, service_ids).await
+    }
+
+    pub(crate) async fn consume_resume_state(&self) -> BackendResult<Vec<String>> {
+        consume_resume_state_file(&self.resume_file).await
+    }
+
+    pub(crate) async fn clear_resume_state(&self) -> BackendResult<()> {
+        clear_resume_state_file(&self.resume_file).await
+    }
+
+    pub(crate) fn managed_service_ids(
+        services: &[ServiceConfig],
+        processes: &HashMap<String, ManagedProcess>,
+    ) -> Vec<String> {
+        services
+            .iter()
+            .filter(|service| processes.contains_key(&service.id))
+            .map(|service| service.id.clone())
+            .collect()
+    }
+
+    pub(crate) fn filter_resume_service_ids(
+        service_ids: Vec<String>,
+        services: &[ServiceConfig],
+    ) -> Vec<String> {
+        let known_ids = services
+            .iter()
+            .map(|service| &service.id)
+            .collect::<HashSet<_>>();
+        let mut seen_ids = HashSet::new();
+        service_ids
+            .into_iter()
+            .filter(|service_id| known_ids.contains(service_id) && seen_ids.insert(service_id.clone()))
+            .collect()
     }
 
     pub(crate) async fn read_state(&self) -> BackendResult<PersistedState> {

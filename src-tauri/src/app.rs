@@ -90,13 +90,18 @@ pub fn run() {
                 "[ServicePilot] backend::init {}ms",
                 t1.elapsed().as_millis()
             );
+            let backend = Arc::new(backend);
             app.manage(AppState {
-                backend: Arc::new(backend),
+                backend: backend.clone(),
             });
             app.manage(UpdateState {
                 pending: StdMutex::new(None),
             });
             setup_tray(app, setup_exit_guard.clone())?;
+            let resume_backend = backend.clone();
+            tauri::async_runtime::spawn(async move {
+                resume_backend.restore_services_from_last_exit().await;
+            });
             eprintln!("[ServicePilot] setup total  {}ms", t0.elapsed().as_millis());
             Ok(())
         })

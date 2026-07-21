@@ -45,7 +45,8 @@ describe('createServicePilotApi', () => {
       language: 'en-US',
       mavenSettingsFile: 'D:\\settings.xml',
       mavenLocalRepository: 'D:\\repo',
-      clearLogsOnRestart: false
+      clearLogsOnRestart: false,
+      resumeServicesOnLaunch: true
     });
 
     expect(invoke).toHaveBeenNthCalledWith(1, 'app_get_snapshot', undefined);
@@ -63,7 +64,8 @@ describe('createServicePilotApi', () => {
         language: 'en-US',
         mavenSettingsFile: 'D:\\settings.xml',
         mavenLocalRepository: 'D:\\repo',
-        clearLogsOnRestart: false
+        clearLogsOnRestart: false,
+        resumeServicesOnLaunch: true
       }
     });
   });

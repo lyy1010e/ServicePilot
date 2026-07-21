@@ -91,6 +91,7 @@ export interface AppSettings {
   mavenSettingsFile: string;
   mavenLocalRepository: string;
   clearLogsOnRestart: boolean;
+  resumeServicesOnLaunch: boolean;
 }
 
 export interface SaveServiceInput extends Omit<ServiceConfig, 'id'> {

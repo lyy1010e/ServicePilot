@@ -625,10 +625,28 @@ impl ServicePilotBackend {
     }
 
     pub(crate) async fn shutdown(&self) -> BackendResult<()> {
-        let running_ids = {
+        self.shutdown_with_resume_state(true).await
+    }
+
+    pub(crate) async fn shutdown_without_resume(&self) -> BackendResult<()> {
+        self.shutdown_with_resume_state(false).await
+    }
+
+    async fn shutdown_with_resume_state(&self, save_resume_state: bool) -> BackendResult<()> {
+        let (running_ids, resume_services_on_launch) = {
             let inner = self.inner.lock().await;
-            inner.processes.keys().cloned().collect::<Vec<_>>()
+            (
+                Self::managed_service_ids(&inner.services, &inner.processes),
+                inner.settings.resume_services_on_launch,
+            )
         };
+
+        if save_resume_state && resume_services_on_launch {
+            self.save_resume_state(running_ids.clone()).await.ok();
+        } else {
+            self.clear_resume_state().await.ok();
+        }
+
         for service_id in running_ids {
             self.stop_service(&service_id).await.ok();
         }
@@ -639,6 +657,36 @@ impl ServicePilotBackend {
             let _ = fs::remove_dir_all(&launch_cache).await;
         }
         Ok(())
+    }
+
+    pub(crate) async fn restore_services_from_last_exit(&self) {
+        let saved_ids = match self.consume_resume_state().await {
+            Ok(service_ids) => service_ids,
+            Err(_) => return,
+        };
+        if saved_ids.is_empty() {
+            return;
+        }
+
+        let service_ids = {
+            let inner = self.inner.lock().await;
+            if !inner.settings.resume_services_on_launch {
+                return;
+            }
+            Self::filter_resume_service_ids(saved_ids, &inner.services)
+        };
+
+        for service_id in service_ids {
+            if let Err(error) = self.start_service(&service_id).await {
+                self.append_log(
+                    &service_id,
+                    LogSource::System,
+                    format!("Failed to restore service after the previous exit: {error}"),
+                )
+                .await;
+            }
+            sleep(Duration::from_millis(300)).await;
+        }
     }
 
     pub(crate) fn build_launch_spec(

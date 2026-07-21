@@ -70,7 +70,8 @@ const EMPTY_SNAPSHOT: AppSnapshot = {
     language: 'zh-CN',
     mavenSettingsFile: '',
     mavenLocalRepository: '',
-    clearLogsOnRestart: true
+    clearLogsOnRestart: true,
+    resumeServicesOnLaunch: false
   }
 };
 
@@ -251,6 +252,8 @@ type Copy = {
   logConfig: string;
   clearLogsOnRestart: string;
   clearLogsOnRestartHint: string;
+  resumeServicesOnLaunch: string;
+  resumeServicesOnLaunchHint: string;
   otherConfig: string;
   otherConfigHint: string;
   advancedConfigManual: string;
@@ -270,9 +273,8 @@ type Copy = {
   actionFailed: string;
   logLoadFailed: string;
   installUpdate: string;
-  updateAvailable: (version: string) => string;
+  updateAvailable: string;
   updateReadyTitle: string;
-  updateReadyDesc: (version: string) => string;
   updateLater: string;
   updateDownloading: string;
   updateDownloadPreparing: string;
@@ -412,6 +414,8 @@ const COPY: Record<AppLanguage, Copy> = {
     logConfig: '日志配置',
     clearLogsOnRestart: '启动或重启服务前清空旧日志',
     clearLogsOnRestartHint: '开启后点击启动或重启会先清空该服务旧日志，再写入新的启动日志。',
+    resumeServicesOnLaunch: '启动时恢复上次退出的服务',
+    resumeServicesOnLaunchHint: '开启后，会在下次打开 ServicePilot 时自动启动上次正常退出前仍在运行的服务。',
     otherConfig: '其他',
     otherConfigHint: '其他系统相关设置（更多配置项将陆续支持）',
     advancedConfigManual: '更多高级配置，请在配置文件中手动修改。',
@@ -430,9 +434,8 @@ const COPY: Record<AppLanguage, Copy> = {
     actionFailed: '操作失败。',
     logLoadFailed: '读取日志失败。',
     installUpdate: '立即更新',
-    updateAvailable: (version) => `发现新版本 ${version}。`,
+    updateAvailable: '发现新版本',
     updateReadyTitle: 'ServicePilot 有新版本',
-    updateReadyDesc: (version) => `版本 ${version} 已准备好下载，更新前会停止正在运行的服务。`,
     updateLater: '稍后',
     updateDownloading: '正在下载更新',
     updateDownloadPreparing: '正在连接更新服务...',
@@ -570,6 +573,8 @@ const COPY: Record<AppLanguage, Copy> = {
     logConfig: 'Log Config',
     clearLogsOnRestart: 'Clear old logs before starting or restarting a service',
     clearLogsOnRestartHint: 'When enabled, Start and Restart clear that service log before writing the new launch output.',
+    resumeServicesOnLaunch: 'Restore services from the previous exit',
+    resumeServicesOnLaunchHint: 'When enabled, ServicePilot starts the services that were still running before its last normal exit.',
     otherConfig: 'Other',
     otherConfigHint: 'Other system settings. More options will be supported later.',
     advancedConfigManual: 'More advanced options can be edited manually in the config file.',
@@ -589,9 +594,8 @@ const COPY: Record<AppLanguage, Copy> = {
     actionFailed: 'Action failed.',
     logLoadFailed: 'Failed to load logs.',
     installUpdate: 'Update Now',
-    updateAvailable: (version) => `Version ${version} is available.`,
+    updateAvailable: 'Update available',
     updateReadyTitle: 'ServicePilot update available',
-    updateReadyDesc: (version) => `Version ${version} is ready to download. Running services will be stopped first.`,
     updateLater: 'Later',
     updateDownloading: 'Downloading update',
     updateDownloadPreparing: 'Connecting to update service...',
@@ -1599,7 +1603,7 @@ export function App() {
   const [deleteServiceTarget, setDeleteServiceTarget] = useState<ServiceConfig | null>(null);
   const [exitConfirmOpen, setExitConfirmOpen] = useState(false);
   const [settingsForm, setSettingsForm] = useState<SettingsFormState>(() =>
-    buildSettingsForm({ language: 'zh-CN', mavenSettingsFile: '', mavenLocalRepository: '', clearLogsOnRestart: true })
+    buildSettingsForm({ language: 'zh-CN', mavenSettingsFile: '', mavenLocalRepository: '', clearLogsOnRestart: true, resumeServicesOnLaunch: false })
   );
   const [feedback, setFeedback] = useState<FeedbackState>(null);
   const [busyKey, setBusyKey] = useState('');
@@ -2272,7 +2276,8 @@ export function App() {
         ...snapshot.settings,
         mavenSettingsFile: settingsForm.mavenSettingsFile.trim(),
         mavenLocalRepository: settingsForm.mavenLocalRepository.trim(),
-        clearLogsOnRestart: settingsForm.clearLogsOnRestart
+        clearLogsOnRestart: settingsForm.clearLogsOnRestart,
+        resumeServicesOnLaunch: settingsForm.resumeServicesOnLaunch
       };
       await window.servicePilot.settings.save(next);
       // 用保存后的值刷新表单（去掉首尾空格）
@@ -2615,7 +2620,7 @@ export function App() {
                   onClick={() => void handleInstallUpdate()}
                   onDoubleClick={blockWindowControlDrag}
                   onMouseDown={blockWindowControlDrag}
-                  title={copy.updateAvailable(updateInfo.version)}
+                  title={copy.updateAvailable}
                   type="button"
                 >
                   <AppIcon icon="arrowUp" size={14} />
@@ -3029,6 +3034,23 @@ export function App() {
                     <span>
                       <strong>{copy.clearLogsOnRestart}</strong>
                       <small>{copy.clearLogsOnRestartHint}</small>
+                    </span>
+                  </label>
+
+                  <label className="toggle-field field--full">
+                    <input
+                      type="checkbox"
+                      checked={settingsForm.resumeServicesOnLaunch}
+                      onChange={(event) =>
+                        setSettingsForm({
+                          ...settingsForm,
+                          resumeServicesOnLaunch: event.target.checked
+                        })
+                      }
+                    />
+                    <span>
+                      <strong>{copy.resumeServicesOnLaunch}</strong>
+                      <small>{copy.resumeServicesOnLaunchHint}</small>
                     </span>
                   </label>
                 </section>
@@ -3793,12 +3815,17 @@ export function App() {
       )}
 
       {updateInfo && updatePromptOpen && (
-        <div className={`pilot-update-card ${isInstallingUpdate ? 'pilot-update-card--busy' : ''}`}>
+        <div className="pilot-update-overlay">
+        <div
+          aria-busy={isInstallingUpdate}
+          aria-modal="true"
+          className={`pilot-update-card ${isInstallingUpdate ? 'pilot-update-card--busy' : ''}`}
+          role="dialog"
+        >
           <div className="pilot-update-card__icon" aria-hidden="true">
             <AppIcon icon={isInstallingUpdate ? 'starting' : 'arrowUp'} size={17} />
           </div>
           <div className="pilot-update-card__content">
-            <div className="pilot-update-card__eyebrow">ServicePilot</div>
             <div className="pilot-update-card__title">
               {updateProgress?.phase === 'installing'
                 ? copy.updateInstallingStatus
@@ -3806,12 +3833,7 @@ export function App() {
                   ? copy.updateDownloading
                   : copy.updateReadyTitle}
             </div>
-            <div className="pilot-update-card__desc">
-              {isInstallingUpdate ? updateStatusText : copy.updateReadyDesc(updateInfo.version)}
-            </div>
-            {!isInstallingUpdate && updateInfo.notes?.trim() && (
-              <div className="pilot-update-card__notes">{updateInfo.notes.trim()}</div>
-            )}
+            {isInstallingUpdate && <div className="pilot-update-card__desc">{updateStatusText}</div>}
             {isInstallingUpdate && (
               <div
                 aria-label={updateStatusText}
@@ -3835,6 +3857,7 @@ export function App() {
               </button>
             </div>
           )}
+        </div>
         </div>
       )}
 

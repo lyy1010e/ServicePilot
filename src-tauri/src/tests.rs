@@ -44,6 +44,72 @@ fn package_with_scripts(scripts: &[(&str, serde_json::Value)]) -> PackageJson {
 }
 
 #[test]
+fn settings_default_service_restoration_to_disabled_for_existing_state_files() {
+    let settings = serde_json::from_value::<AppSettings>(json!({
+        "language": "zh-CN",
+        "mavenSettingsFile": "",
+        "mavenLocalRepository": "",
+        "clearLogsOnRestart": true
+    }))
+    .unwrap();
+
+    assert!(!settings.resume_services_on_launch);
+    assert!(!default_settings().resume_services_on_launch);
+}
+
+#[test]
+fn resume_service_ids_keep_managed_and_existing_services_in_order() {
+    let mut first = service(LaunchType::JavaMain, ServiceKind::Spring, "java", &[]);
+    first.id = "first".to_string();
+    let mut second = first.clone();
+    second.id = "second".to_string();
+    let services = vec![first, second];
+    let processes = HashMap::from([("second".to_string(), ManagedProcess { pid: 2 })]);
+
+    assert_eq!(
+        ServicePilotBackend::managed_service_ids(&services, &processes),
+        vec!["second".to_string()]
+    );
+    assert_eq!(
+        ServicePilotBackend::filter_resume_service_ids(
+            vec![
+                "second".to_string(),
+                "deleted".to_string(),
+                "first".to_string(),
+                "second".to_string(),
+            ],
+            &services,
+        ),
+        vec!["second".to_string(), "first".to_string()]
+    );
+}
+
+#[tokio::test]
+async fn resume_state_is_replaced_and_consumed_once() {
+    let directory = std::env::temp_dir().join(format!("service-pilot-test-{}", new_id()));
+    let resume_file = directory.join("service-pilot-resume.json");
+
+    store::save_resume_state_file(&resume_file, vec!["first".to_string()])
+        .await
+        .unwrap();
+    store::save_resume_state_file(&resume_file, vec!["second".to_string()])
+        .await
+        .unwrap();
+
+    assert_eq!(
+        store::consume_resume_state_file(&resume_file).await.unwrap(),
+        vec!["second".to_string()]
+    );
+    assert!(!resume_file.exists());
+    assert!(store::consume_resume_state_file(&resume_file)
+        .await
+        .unwrap()
+        .is_empty());
+
+    let _ = fs::remove_dir_all(directory).await;
+}
+
+#[test]
 fn safe_launch_policy_allows_local_development_commands() {
     let maven = service(
         LaunchType::Maven,
@@ -127,6 +193,7 @@ fn maven_launch_spec_includes_managed_local_startup_args() {
         maven_settings_file: "D:\\environment\\settings.xml".to_string(),
         maven_local_repository: "D:\\environment\\repository".to_string(),
         clear_logs_on_restart: true,
+        resume_services_on_launch: false,
     };
     let launch = create_launch_spec(&maven, &settings);
 

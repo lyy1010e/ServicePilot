@@ -118,6 +118,7 @@ impl ServicePilotBackend {
                 imported_settings.maven_local_repository.clone()
             },
             clear_logs_on_restart: self.inner.lock().await.settings.clear_logs_on_restart,
+            resume_services_on_launch: self.inner.lock().await.settings.resume_services_on_launch,
         };
 
         let classpath = if prepare_classpath {

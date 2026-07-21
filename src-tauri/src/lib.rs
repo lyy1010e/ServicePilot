@@ -54,6 +54,7 @@ use models::*;
 use runtime_support::*;
 
 const DATA_FILE: &str = "service-pilot-state.json";
+const RESUME_FILE: &str = "service-pilot-resume.json";
 const MAX_LOG_ENTRIES: usize = 500;
 const MAX_LOG_ENTRY_BYTES: usize = 16 * 1024;
 const MAX_LOG_EVENT_ENTRIES: usize = 50;

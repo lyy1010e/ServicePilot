@@ -29,7 +29,8 @@ function snapshot(overrides: Partial<AppSnapshot> = {}): AppSnapshot {
       language: 'en-US',
       mavenSettingsFile: '',
       mavenLocalRepository: '',
-      clearLogsOnRestart: true
+      clearLogsOnRestart: true,
+      resumeServicesOnLaunch: false
     },
     ...overrides
   };
@@ -397,8 +398,8 @@ describe('App service flows', () => {
     await waitFor(() => expect(api.app.checkUpdate).toHaveBeenCalled(), { timeout: 5000 });
 
     expect(screen.getByText('ServicePilot update available')).toBeInTheDocument();
-    expect(screen.getByText(/Version 1\.0\.6 is ready to download/)).toBeInTheDocument();
-    expect(screen.getByText(/Added release notes in updater/)).toBeInTheDocument();
+    expect(screen.queryByText(/Version 1\.0\.6 is ready to download/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Added release notes in updater/)).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Later' }));
     expect(screen.queryByText('ServicePilot update available')).not.toBeInTheDocument();
@@ -412,5 +413,28 @@ describe('App service flows', () => {
     await user.click(updateButtons[updateButtons.length - 1]);
 
     await waitFor(() => expect(api.app.installUpdate).toHaveBeenCalledTimes(1));
+  });
+
+  it('keeps service restoration disabled by default and saves it when enabled', async () => {
+    const { api, user } = await renderApp(snapshot());
+
+    await user.click(screen.getByRole('button', { name: 'System Settings' }));
+    const restorationToggle = screen.getByText('Restore services from the previous exit').closest('label');
+    expect(restorationToggle).not.toBeNull();
+    const checkbox = within(restorationToggle!).getByRole('checkbox');
+    expect(checkbox).not.toBeChecked();
+
+    await user.click(checkbox);
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() =>
+      expect(api.settings.save).toHaveBeenCalledWith({
+        language: 'en-US',
+        mavenSettingsFile: '',
+        mavenLocalRepository: '',
+        clearLogsOnRestart: true,
+        resumeServicesOnLaunch: true
+      })
+    );
   });
 });

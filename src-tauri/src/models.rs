@@ -39,6 +39,7 @@ pub(crate) struct UpdateState {
 pub(crate) struct ServicePilotBackend {
     pub(crate) app: AppHandle<Wry>,
     pub(crate) state_file: PathBuf,
+    pub(crate) resume_file: PathBuf,
     pub(crate) inner: Arc<Mutex<BackendState>>,
     pub(crate) last_snapshot_emitted: Arc<Mutex<std::time::Instant>>,
 }
@@ -196,6 +197,14 @@ pub(crate) struct AppSettings {
     pub(crate) maven_local_repository: String,
     #[serde(default = "default_true")]
     pub(crate) clear_logs_on_restart: bool,
+    #[serde(default)]
+    pub(crate) resume_services_on_launch: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ResumeState {
+    pub(crate) service_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

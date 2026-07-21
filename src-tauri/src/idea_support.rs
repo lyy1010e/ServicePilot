@@ -398,6 +398,7 @@ pub(crate) fn extract_idea_maven_settings(content: &str, project_root: &Path) ->
             .map(|value| expand_idea_path(&value, Some(project_root)))
             .unwrap_or_default(),
         clear_logs_on_restart: true,
+        resume_services_on_launch: false,
     }
 }
 

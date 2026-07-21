@@ -33,7 +33,8 @@ function snapshot(runtime: AppSnapshot['runtime']): AppSnapshot {
       language: 'zh-CN',
       mavenSettingsFile: '',
       mavenLocalRepository: '',
-      clearLogsOnRestart: true
+      clearLogsOnRestart: true,
+      resumeServicesOnLaunch: false
     }
   };
 }
