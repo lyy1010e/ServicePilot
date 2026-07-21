@@ -49,6 +49,8 @@ pub(crate) struct BackendState {
     pub(crate) settings: AppSettings,
     pub(crate) runtime: HashMap<String, RuntimeState>,
     pub(crate) log_history: HashMap<String, Vec<LogEntry>>,
+    pub(crate) pending_log_entries: HashMap<String, Vec<LogEntry>>,
+    pub(crate) pending_log_emits: HashSet<String>,
     pub(crate) processes: HashMap<String, ManagedProcess>,
 }
 

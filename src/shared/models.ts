@@ -213,6 +213,6 @@ export interface WindowApi {
 
 export interface EventApi {
   onSnapshot: (listener: (snapshot: AppSnapshot) => void) => () => void;
-  onLogEntry: (listener: (entry: LogEntry) => void) => () => void;
+  onLogBatch: (listener: (entries: LogEntry[]) => void) => () => void;
   onUpdateProgress: (listener: (progress: AppUpdateProgress) => void) => () => void;
 }

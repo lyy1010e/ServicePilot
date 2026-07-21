@@ -150,7 +150,7 @@ export function createServicePilotApi(): ServicePilotApi {
     },
     events: {
       onSnapshot: (listener) => wrapListener<AppSnapshot>('snapshot:update', listener),
-      onLogEntry: (listener) => wrapListener<LogEntry>('log:entry', listener),
+      onLogBatch: (listener) => wrapListener<LogEntry[]>('log:batch', listener),
       onUpdateProgress: (listener) => wrapListener<AppUpdateProgress>('update:progress', listener)
     }
   };

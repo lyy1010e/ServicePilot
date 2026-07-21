@@ -98,7 +98,7 @@ function createMockApi(initialSnapshot: AppSnapshot): ServicePilotApi {
     },
     events: {
       onSnapshot: vi.fn().mockReturnValue(vi.fn()),
-      onLogEntry: vi.fn().mockReturnValue(vi.fn()),
+      onLogBatch: vi.fn().mockReturnValue(vi.fn()),
       onUpdateProgress: vi.fn().mockReturnValue(vi.fn())
     }
   };

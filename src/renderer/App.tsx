@@ -1406,7 +1406,16 @@ const VirtualLogList = memo(function VirtualLogList({
   const [scrollTop, setScrollTop] = useState(0);
   const [containerHeight, setContainerHeight] = useState(0);
   const [measuredHeights, setMeasuredHeights] = useState<Record<string, number>>({});
-  const rowRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  useEffect(() => {
+    const activeIds = new Set(items.map((item) => item.id));
+    setMeasuredHeights((current) => {
+      const staleIds = Object.keys(current).filter((id) => !activeIds.has(id));
+      if (!staleIds.length) {
+        return current;
+      }
+      return Object.fromEntries(Object.entries(current).filter(([id]) => activeIds.has(id)));
+    });
+  }, [items]);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -1424,7 +1433,6 @@ const VirtualLogList = memo(function VirtualLogList({
   // 测量已渲染行的实际高度
   const measureRow = useCallback((id: string, node: HTMLDivElement | null) => {
     if (!node) return;
-    rowRefs.current[id] = node;
     const h = node.offsetHeight;
     if (h > 0) {
       setMeasuredHeights((prev) => (prev[id] === h ? prev : { ...prev, [id]: h }));
@@ -1731,18 +1739,21 @@ export function App() {
       setSnapshot(nextSnapshot);
     });
 
-    const offLog = window.servicePilot.events.onLogEntry((entry) => {
+    const offLog = window.servicePilot.events.onLogBatch((entries) => {
+      const selectedId = selectedLogServiceIdRef.current;
+      if (!selectedId || !snapshotRef.current.services.some((service) => service.id === selectedId)) {
+        return;
+      }
+      const selectedEntries = entries.filter((entry) => entry.serviceId === selectedId);
+      if (!selectedEntries.length) {
+        return;
+      }
       startTransition(() => {
         setLogsByService((current) => {
           // 只为当前选中的服务累积实时日志，其他服务切换时从 logs.history 加载
-          const selectedId = snapshotRef.current.services.length > 0 ? selectedLogServiceIdRef.current : '';
-          if (selectedId && entry.serviceId !== selectedId) {
-            return current;
-          }
-          const entries = current[entry.serviceId] ?? [];
+          const currentEntries = current[selectedId] ?? [];
           return {
-            ...current,
-            [entry.serviceId]: mergeLogEntries(entries, entry)
+            [selectedId]: selectedEntries.reduce(mergeLogEntries, currentEntries)
           };
         });
       });
@@ -1809,6 +1820,15 @@ export function App() {
   }, [selectedLogServiceId, snapshot.services]);
 
   useEffect(() => {
+    setLogsByService((current) => {
+      if (!selectedLogServiceId || !current[selectedLogServiceId]) {
+        return Object.keys(current).length ? {} : current;
+      }
+      return Object.keys(current).length === 1 ? current : { [selectedLogServiceId]: current[selectedLogServiceId] };
+    });
+  }, [selectedLogServiceId]);
+
+  useEffect(() => {
     if (selectedGroup === 'all') {
       return;
     }
@@ -1843,10 +1863,12 @@ export function App() {
     window.servicePilot.logs
       .history(selectedLogServiceId)
       .then((entries) => {
-        setLogsByService((current) => ({
-          ...current,
-          [selectedLogServiceId]: entries.reduce<LogEntry[]>((merged, entry) => mergeLogEntries(merged, entry), [])
-        }));
+        setLogsByService((current) => {
+          const history = entries.reduce<LogEntry[]>((merged, entry) => mergeLogEntries(merged, entry), []);
+          return {
+            [selectedLogServiceId]: (current[selectedLogServiceId] ?? []).reduce(mergeLogEntries, history)
+          };
+        });
       })
       .catch((error) => {
         setFeedback({

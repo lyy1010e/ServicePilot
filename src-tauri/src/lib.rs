@@ -20,7 +20,7 @@ use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_updater::{Update, UpdaterExt};
 use tokio::{
     fs,
-    io::{AsyncBufReadExt, BufReader},
+    io::{AsyncBufRead, AsyncBufReadExt, BufReader},
     process::Command,
     sync::Mutex,
     time::{sleep, Duration},
@@ -54,8 +54,11 @@ use models::*;
 use runtime_support::*;
 
 const DATA_FILE: &str = "service-pilot-state.json";
-const MAX_LOG_ENTRIES: usize = 2000;
-const MAX_MERGE_TEXT_LENGTH: usize = 100 * 1024; // 100 KB
+const MAX_LOG_ENTRIES: usize = 500;
+const MAX_LOG_ENTRY_BYTES: usize = 16 * 1024;
+const MAX_LOG_EVENT_ENTRIES: usize = 50;
+const MAX_TOTAL_LOG_BYTES: usize = 64 * 1024 * 1024;
+const LOG_EVENT_DEBOUNCE: Duration = Duration::from_millis(100);
 const TRAY_SHOW_ID: &str = "tray-show";
 const TRAY_QUIT_ID: &str = "tray-quit";
 

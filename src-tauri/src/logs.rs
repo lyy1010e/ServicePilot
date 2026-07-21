@@ -28,6 +28,8 @@ impl ServicePilotBackend {
                 return Err("Service not found.".to_string());
             }
             inner.log_history.remove(service_id);
+            inner.pending_log_entries.remove(service_id);
+            inner.pending_log_emits.remove(service_id);
         }
         self.emit_snapshot().await;
         Ok(())
@@ -47,7 +49,7 @@ impl ServicePilotBackend {
         }
 
         for text in parts {
-            let text = strip_ansi_sequences(&text);
+            let text = truncate_log_text(strip_ansi_sequences(&text));
             if text.is_empty() {
                 continue;
             }
@@ -66,13 +68,11 @@ impl ServicePilotBackend {
                     if should_merge_log_line(previous, &entry) {
                         previous.text.push('\n');
                         previous.text.push_str(&entry.text);
-                        if previous.text.len() > MAX_MERGE_TEXT_LENGTH {
-                            let excess = previous.text.len() - MAX_MERGE_TEXT_LENGTH;
-                            previous.text.drain(..excess);
-                        }
+                        trim_log_text(&mut previous.text);
                         let merged = previous.clone();
+                        trim_log_history(&mut inner.log_history);
                         drop(inner);
-                        let _ = self.app.emit("log:entry", merged);
+                        self.queue_log_event(merged).await;
                         self.detect_access_info(service_id, &text).await;
                         self.detect_failure_summary(service_id, &source, &text)
                             .await;
@@ -80,13 +80,10 @@ impl ServicePilotBackend {
                     }
                 }
                 history.push(entry.clone());
-                if history.len() > MAX_LOG_ENTRIES {
-                    let remove = history.len() - MAX_LOG_ENTRIES;
-                    history.drain(0..remove);
-                }
+                trim_log_history(&mut inner.log_history);
             }
 
-            let _ = self.app.emit("log:entry", entry.clone());
+            self.queue_log_event(entry.clone()).await;
             self.detect_access_info(service_id, &text).await;
             self.detect_failure_summary(service_id, &source, &text)
                 .await;
@@ -94,7 +91,7 @@ impl ServicePilotBackend {
     }
 
     async fn append_log_entry(&self, service_id: &str, source: LogSource, text: String) {
-        let text = strip_ansi_sequences(&text);
+        let text = truncate_log_text(strip_ansi_sequences(&text));
         if text.is_empty() {
             return;
         }
@@ -110,13 +107,45 @@ impl ServicePilotBackend {
             let mut inner = self.inner.lock().await;
             let history = inner.log_history.entry(service_id.to_string()).or_default();
             history.push(entry.clone());
-            if history.len() > MAX_LOG_ENTRIES {
-                let remove = history.len() - MAX_LOG_ENTRIES;
-                history.drain(0..remove);
-            }
+            trim_log_history(&mut inner.log_history);
         }
 
-        let _ = self.app.emit("log:entry", entry);
+        self.queue_log_event(entry).await;
+    }
+
+    async fn queue_log_event(&self, entry: LogEntry) {
+        let service_id = entry.service_id.clone();
+        let should_schedule = {
+            let mut inner = self.inner.lock().await;
+            let pending = inner.pending_log_entries.entry(service_id.clone()).or_default();
+            if pending.last().is_some_and(|previous| previous.id == entry.id) {
+                *pending.last_mut().expect("pending log entry exists") = entry;
+            } else {
+                pending.push(entry);
+                if pending.len() > MAX_LOG_EVENT_ENTRIES {
+                    let remove = pending.len() - MAX_LOG_EVENT_ENTRIES;
+                    pending.drain(0..remove);
+                }
+            }
+            inner.pending_log_emits.insert(service_id.clone())
+        };
+
+        if !should_schedule {
+            return;
+        }
+
+        let backend = self.clone();
+        tauri::async_runtime::spawn(async move {
+            sleep(LOG_EVENT_DEBOUNCE).await;
+            let entries = {
+                let mut inner = backend.inner.lock().await;
+                inner.pending_log_emits.remove(&service_id);
+                inner.pending_log_entries.remove(&service_id).unwrap_or_default()
+            };
+            if !entries.is_empty() {
+                let _ = backend.app.emit("log:batch", entries);
+            }
+        });
     }
 
     async fn detect_access_info(&self, service_id: &str, text: &str) {
@@ -223,5 +252,94 @@ impl ServicePilotBackend {
             }
         }
         self.emit_snapshot().await;
+    }
+}
+
+fn truncate_log_text(mut text: String) -> String {
+    trim_log_text(&mut text);
+    text
+}
+
+fn trim_log_text(text: &mut String) {
+    if text.len() <= MAX_LOG_ENTRY_BYTES {
+        return;
+    }
+
+    let mut start = text.len() - MAX_LOG_ENTRY_BYTES;
+    while !text.is_char_boundary(start) {
+        start += 1;
+    }
+    text.drain(..start);
+}
+
+fn trim_log_history(history: &mut HashMap<String, Vec<LogEntry>>) {
+    for entries in history.values_mut() {
+        if entries.len() > MAX_LOG_ENTRIES {
+            let remove = entries.len() - MAX_LOG_ENTRIES;
+            entries.drain(0..remove);
+        }
+    }
+
+    let mut total_bytes = history
+        .values()
+        .flatten()
+        .map(|entry| entry.text.len())
+        .sum::<usize>();
+    while total_bytes > MAX_TOTAL_LOG_BYTES {
+        let Some(service_id) = history
+            .iter()
+            .filter(|(_, entries)| !entries.is_empty())
+            .min_by_key(|(_, entries)| &entries[0].timestamp)
+            .map(|(service_id, _)| service_id.clone())
+        else {
+            break;
+        };
+        let removed = history
+            .get_mut(&service_id)
+            .and_then(|entries| (!entries.is_empty()).then(|| entries.remove(0)));
+        let Some(entry) = removed else {
+            break;
+        };
+        total_bytes = total_bytes.saturating_sub(entry.text.len());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(id: usize, text: String) -> LogEntry {
+        LogEntry {
+            id: id.to_string(),
+            service_id: "service-1".to_string(),
+            timestamp: format!("2026-07-21T00:00:{id:02}.000Z"),
+            source: LogSource::Stdout,
+            text,
+        }
+    }
+
+    #[test]
+    fn trim_log_text_preserves_valid_utf8_at_the_size_limit() {
+        let mut text = "中".repeat(MAX_LOG_ENTRY_BYTES);
+        trim_log_text(&mut text);
+
+        assert!(text.len() <= MAX_LOG_ENTRY_BYTES);
+        assert!(text.is_char_boundary(0));
+    }
+
+    #[test]
+    fn trim_log_history_keeps_only_the_recent_entries_per_service() {
+        let mut history = HashMap::from([(
+            "service-1".to_string(),
+            (0..=MAX_LOG_ENTRIES)
+                .map(|id| entry(id, "line".to_string()))
+                .collect(),
+        )]);
+
+        trim_log_history(&mut history);
+
+        let entries = history.get("service-1").expect("service history exists");
+        assert_eq!(entries.len(), MAX_LOG_ENTRIES);
+        assert_eq!(entries[0].id, "1");
     }
 }

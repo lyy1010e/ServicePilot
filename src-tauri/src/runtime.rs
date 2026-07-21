@@ -410,7 +410,7 @@ impl ServicePilotBackend {
             tauri::async_runtime::spawn(async move {
                 let mut reader = BufReader::new(stdout);
                 let mut bytes = Vec::new();
-                while let Ok(read) = reader.read_until(b'\n', &mut bytes).await {
+                while let Ok(read) = read_limited_process_line(&mut reader, &mut bytes).await {
                     if read == 0 {
                         break;
                     }
@@ -438,7 +438,7 @@ impl ServicePilotBackend {
             tauri::async_runtime::spawn(async move {
                 let mut reader = BufReader::new(stderr);
                 let mut bytes = Vec::new();
-                while let Ok(read) = reader.read_until(b'\n', &mut bytes).await {
+                while let Ok(read) = read_limited_process_line(&mut reader, &mut bytes).await {
                     if read == 0 {
                         break;
                     }
@@ -838,5 +838,36 @@ impl ServicePilotBackend {
         self.persist_state().await?;
         self.emit_snapshot().await;
         Ok(())
+    }
+}
+
+async fn read_limited_process_line<R: AsyncBufRead + Unpin>(
+    reader: &mut R,
+    line: &mut Vec<u8>,
+) -> std::io::Result<usize> {
+    line.clear();
+    let mut bytes_read = 0;
+
+    loop {
+        let (consume, line_complete) = {
+            let available = reader.fill_buf().await?;
+            if available.is_empty() {
+                return Ok(bytes_read);
+            }
+            let consume = available
+                .iter()
+                .position(|byte| *byte == b'\n')
+                .map(|index| index + 1)
+                .unwrap_or(available.len());
+            let remaining = MAX_LOG_ENTRY_BYTES.saturating_sub(line.len());
+            line.extend_from_slice(&available[..consume.min(remaining)]);
+            (consume, consume <= available.len() && available[consume - 1] == b'\n')
+        };
+
+        reader.consume(consume);
+        bytes_read = bytes_read.saturating_add(consume);
+        if line_complete {
+            return Ok(bytes_read);
+        }
     }
 }

@@ -23,6 +23,8 @@ impl ServicePilotBackend {
                 },
                 runtime: HashMap::new(),
                 log_history: HashMap::new(),
+                pending_log_entries: HashMap::new(),
+                pending_log_emits: HashSet::new(),
                 processes: HashMap::new(),
             })),
         })

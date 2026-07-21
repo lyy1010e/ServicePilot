@@ -7,7 +7,8 @@ export type LogLevelFilter = 'ALL' | LogLevel;
 export const LOG_LEVELS: LogLevel[] = ['ERROR', 'WARN', 'INFO', 'DEBUG', 'TRACE', 'SYSTEM'];
 export const LOG_LEVEL_FILTERS: LogLevelFilter[] = ['ALL', ...LOG_LEVELS];
 
-const MAX_MERGE_TEXT_LENGTH = 100 * 1024;
+const MAX_LOG_ENTRIES = 500;
+const MAX_LOG_TEXT_LENGTH = 16 * 1024;
 
 export function formatLogTime(value: string | undefined): string {
   if (!value) {
@@ -82,21 +83,24 @@ function shouldAppendToPreviousLog(previous: LogEntry | undefined, entry: LogEnt
 }
 
 export function mergeLogEntries(entries: LogEntry[], entry: LogEntry): LogEntry[] {
+  const nextEntry = entry.text.length > MAX_LOG_TEXT_LENGTH
+    ? { ...entry, text: entry.text.slice(-MAX_LOG_TEXT_LENGTH) }
+    : entry;
   const previous = entries[entries.length - 1];
-  if (previous?.id === entry.id) {
-    return [...entries.slice(0, -1), entry].slice(-2000);
+  if (previous?.id === nextEntry.id) {
+    return [...entries.slice(0, -1), nextEntry].slice(-MAX_LOG_ENTRIES);
   }
-  if (!shouldAppendToPreviousLog(previous, entry)) {
-    return [...entries, entry].slice(-2000);
+  if (!shouldAppendToPreviousLog(previous, nextEntry)) {
+    return [...entries, nextEntry].slice(-MAX_LOG_ENTRIES);
   }
-  const combined = `${previous.text}\n${entry.text}`;
+  const combined = `${previous.text}\n${nextEntry.text}`;
   const merged = {
     ...previous,
-    text: combined.length > MAX_MERGE_TEXT_LENGTH
-      ? combined.slice(-MAX_MERGE_TEXT_LENGTH)
+    text: combined.length > MAX_LOG_TEXT_LENGTH
+      ? combined.slice(-MAX_LOG_TEXT_LENGTH)
       : combined
   };
-  return [...entries.slice(0, -1), merged].slice(-2000);
+  return [...entries.slice(0, -1), merged].slice(-MAX_LOG_ENTRIES);
 }
 
 export function renderLogSearchHighlight(text: string, query: string, active: boolean) {
