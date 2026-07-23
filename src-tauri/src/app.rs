@@ -94,13 +94,14 @@ pub fn run() {
             app.manage(AppState {
                 backend: backend.clone(),
             });
-            app.manage(UpdateState {
-                pending: StdMutex::new(None),
-            });
             setup_tray(app, setup_exit_guard.clone())?;
             let resume_backend = backend.clone();
             tauri::async_runtime::spawn(async move {
                 resume_backend.restore_services_from_last_exit().await;
+            });
+            let health_backend = backend.clone();
+            tauri::async_runtime::spawn(async move {
+                health_backend.monitor_local_service_health().await;
             });
             eprintln!("[ServicePilot] setup total  {}ms", t0.elapsed().as_millis());
             Ok(())

@@ -53,10 +53,14 @@ impl ServicePilotBackend {
 
         let state_file = user_data_path.join(DATA_FILE);
         let resume_file = user_data_path.join(RESUME_FILE);
+        #[cfg(windows)]
+        let process_job = create_process_job()?;
         Ok(Self {
             app,
             state_file,
             resume_file,
+            #[cfg(windows)]
+            process_job,
             last_snapshot_emitted: Arc::new(Mutex::new(std::time::Instant::now())),
             inner: Arc::new(Mutex::new(BackendState {
                 services: Vec::new(),
@@ -70,6 +74,8 @@ impl ServicePilotBackend {
                 },
                 runtime: HashMap::new(),
                 log_history: HashMap::new(),
+                log_history_bytes: 0,
+                health_failures: HashMap::new(),
                 pending_log_entries: HashMap::new(),
                 pending_log_emits: HashSet::new(),
                 processes: HashMap::new(),
@@ -98,6 +104,7 @@ impl ServicePilotBackend {
                     message: None,
                     detected_port: None,
                     detected_url: None,
+                    health_warning: None,
                     failure_summary: None,
                     failure_category: None,
                 },
@@ -170,6 +177,16 @@ impl ServicePilotBackend {
             .filter(|service| processes.contains_key(&service.id))
             .map(|service| service.id.clone())
             .collect()
+    }
+
+    pub(crate) fn managed_process_matches(
+        processes: &HashMap<String, ManagedProcess>,
+        service_id: &str,
+        pid: u32,
+    ) -> bool {
+        processes
+            .get(service_id)
+            .is_some_and(|process| process.pid == pid)
     }
 
     pub(crate) fn filter_resume_service_ids(

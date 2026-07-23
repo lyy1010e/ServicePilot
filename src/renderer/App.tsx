@@ -199,6 +199,7 @@ type Copy = {
   quitConfirm: string;
   statusLabel: Record<RuntimeState['status'], string>;
   statusHint: Record<RuntimeState['status'], string>;
+  healthWarning: string;
   createService: string;
   updateService: string;
   serviceModalDesc: string;
@@ -361,6 +362,7 @@ const COPY: Record<AppLanguage, Copy> = {
       failed: '启动失败',
       stopping: '停止中'
     },
+    healthWarning: '端口无响应',
     createService: '新建服务',
     updateService: '编辑服务',
     serviceModalDesc: '配置本地 Spring Boot、Vue 或 Rust 服务。',
@@ -520,6 +522,7 @@ const COPY: Record<AppLanguage, Copy> = {
       failed: 'Launch failed',
       stopping: 'Stopping'
     },
+    healthWarning: 'Port unavailable',
     createService: 'Create Service',
     updateService: 'Edit Service',
     serviceModalDesc: 'Configure a local Spring Boot, Vue, or Rust service.',
@@ -958,7 +961,21 @@ function getRuntime(snapshot: AppSnapshot, serviceId: string): RuntimeState {
   };
 }
 
-function getStatusTone(status: RuntimeState['status']): 'running' | 'stopped' | 'failed' | 'starting' {
+function isRuntimeActive(runtime: RuntimeState | undefined): boolean {
+  return Boolean(
+    runtime
+      && (runtime.status === 'running' || runtime.status === 'starting' || runtime.status === 'stopping')
+      && runtime.startedAt
+  );
+}
+
+function getStatusTone(
+  status: RuntimeState['status'],
+  healthWarning?: string
+): 'running' | 'stopped' | 'failed' | 'starting' | 'warning' {
+  if (status === 'running' && healthWarning) {
+    return 'warning';
+  }
   if (status === 'running') {
     return 'running';
   }
@@ -1370,12 +1387,20 @@ function LanguageSwitch({
   );
 }
 
-function StatusBadge({ status, copy }: { status: RuntimeState['status']; copy: Copy }) {
-  const tone = getStatusTone(status);
+function StatusBadge({
+  status,
+  healthWarning,
+  copy
+}: {
+  status: RuntimeState['status'];
+  healthWarning?: string;
+  copy: Copy;
+}) {
+  const tone = getStatusTone(status, healthWarning);
   return (
-    <div className={`status-badge status-badge--${tone}`}>
+    <div className={`status-badge status-badge--${tone}`} title={healthWarning ?? copy.statusHint[status]}>
       <span className={`status-badge__dot status-badge__dot--${tone}`} />
-      <span>{copy.statusLabel[status]}</span>
+      <span>{healthWarning ? copy.healthWarning : copy.statusLabel[status]}</span>
     </div>
   );
 }
@@ -1564,14 +1589,7 @@ const VirtualLogList = memo(function VirtualLogList({
   );
 });
 
-const ServiceRuntimeDuration = memo(function ServiceRuntimeDuration({ runtime }: { runtime: RuntimeState | undefined }) {
-  const [now, setNow] = useState(Date.now());
-  const isActive = runtime && (runtime.status === 'running' || runtime.status === 'starting' || runtime.status === 'stopping') && runtime.startedAt;
-  useEffect(() => {
-    if (!isActive) return;
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, [isActive]);
+const ServiceRuntimeDuration = memo(function ServiceRuntimeDuration({ runtime, now }: { runtime: RuntimeState | undefined; now: number }) {
   return <div className="service-row__runtime">{formatDuration(runtime, now)}</div>;
 });
 
@@ -1580,6 +1598,7 @@ export { getLogMessage };
 export function App() {
   const [snapshot, setSnapshot] = useState<AppSnapshot>(EMPTY_SNAPSHOT);
   const [isReady, setIsReady] = useState(false);
+  const [runtimeNow, setRuntimeNow] = useState(() => Date.now());
   const snapshotRef = useRef(snapshot);
   snapshotRef.current = snapshot;
   const [logsByService, setLogsByService] = useState<Record<string, LogEntry[]>>({});
@@ -1620,6 +1639,18 @@ export function App() {
 
   const language = snapshot.settings.language;
   const copy = COPY[language];
+  const hasActiveRuntime = useMemo(
+    () => Object.values(snapshot.runtime).some((runtime) => isRuntimeActive(runtime)),
+    [snapshot.runtime]
+  );
+  useEffect(() => {
+    if (!hasActiveRuntime) {
+      return;
+    }
+    setRuntimeNow(Date.now());
+    const timer = window.setInterval(() => setRuntimeNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [hasActiveRuntime]);
   const groupUi = useMemo(
     () => ({
       overviewTitle: language === 'zh-CN' ? '分组工作台' : 'Group Workspace',
@@ -3188,14 +3219,14 @@ export function App() {
                         </div>
 
                         <div className="service-row__status">
-                          <StatusBadge copy={copy} status={runtime.status} />
+                          <StatusBadge copy={copy} healthWarning={runtime.healthWarning} status={runtime.status} />
                         </div>
 
                         <div className="service-row__port">
                           <span className="service-row__port-text">{servicePort ?? '--'}</span>
                         </div>
 
-                        <ServiceRuntimeDuration runtime={runtime} />
+                        <ServiceRuntimeDuration now={isRuntimeActive(runtime) ? runtimeNow : 0} runtime={runtime} />
                         <div className="service-row__last">{formatLastStart(runtime.startedAt, language)}</div>
 
                         <div className="service-row__actions">

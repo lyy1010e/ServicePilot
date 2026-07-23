@@ -60,6 +60,7 @@ export interface RuntimeState {
   message?: string;
   detectedPort?: number;
   detectedUrl?: string;
+  healthWarning?: string;
   failureSummary?: string;
   failureCategory?: FailureCategory;
 }

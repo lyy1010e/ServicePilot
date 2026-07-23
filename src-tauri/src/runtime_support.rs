@@ -1,5 +1,97 @@
 use super::*;
 
+#[cfg(windows)]
+use windows_sys::Win32::{
+    Foundation::{CloseHandle, HANDLE},
+    System::{
+        JobObjects::{
+            AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+            SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        },
+        Threading::{OpenProcess, PROCESS_SET_QUOTA, PROCESS_TERMINATE},
+    },
+};
+
+#[cfg(windows)]
+#[derive(Clone)]
+pub(crate) struct ProcessJob {
+    inner: Arc<ProcessJobInner>,
+}
+
+#[cfg(windows)]
+struct ProcessJobInner {
+    handle: usize,
+}
+
+#[cfg(windows)]
+impl Drop for ProcessJobInner {
+    fn drop(&mut self) {
+        unsafe {
+            CloseHandle(self.handle as HANDLE);
+        }
+    }
+}
+
+#[cfg(windows)]
+pub(crate) fn create_process_job() -> BackendResult<ProcessJob> {
+    let handle = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+    if handle.is_null() {
+        return Err(format!(
+            "Failed to create process job: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+
+    let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    let configured = unsafe {
+        SetInformationJobObject(
+            handle,
+            JobObjectExtendedLimitInformation,
+            &limits as *const _ as *const std::ffi::c_void,
+            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+        )
+    };
+    if configured == 0 {
+        let error = std::io::Error::last_os_error();
+        unsafe {
+            CloseHandle(handle);
+        }
+        return Err(format!("Failed to configure process job: {error}"));
+    }
+
+    Ok(ProcessJob {
+        inner: Arc::new(ProcessJobInner {
+            handle: handle as usize,
+        }),
+    })
+}
+
+#[cfg(windows)]
+impl ProcessJob {
+    pub(crate) fn assign(&self, pid: u32) -> BackendResult<()> {
+        let process = unsafe { OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, 0, pid) };
+        if process.is_null() {
+            return Err(format!(
+                "Failed to open managed process {pid}: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        let assigned = unsafe { AssignProcessToJobObject(self.inner.handle as HANDLE, process) };
+        let error = (assigned == 0).then(std::io::Error::last_os_error);
+        unsafe {
+            CloseHandle(process);
+        }
+        if let Some(error) = error {
+            return Err(format!(
+                "Failed to assign process {pid} to ServicePilot: {error}"
+            ));
+        }
+        Ok(())
+    }
+}
+
 pub(crate) const DEFAULT_SPRING_JVM_ARGS: [&str; 2] = ["-Xms128m", "-Xmx512m"];
 
 pub(crate) fn default_spring_jvm_args() -> Vec<String> {

@@ -1,5 +1,6 @@
 use super::*;
 use serde_json::json;
+use crate::runtime::local_port_warning;
 
 fn service(
     launch_type: LaunchType,
@@ -70,6 +71,8 @@ fn resume_service_ids_keep_managed_and_existing_services_in_order() {
         ServicePilotBackend::managed_service_ids(&services, &processes),
         vec!["second".to_string()]
     );
+    assert!(ServicePilotBackend::managed_process_matches(&processes, "second", 2));
+    assert!(!ServicePilotBackend::managed_process_matches(&processes, "second", 1));
     assert_eq!(
         ServicePilotBackend::filter_resume_service_ids(
             vec![
@@ -81,6 +84,15 @@ fn resume_service_ids_keep_managed_and_existing_services_in_order() {
             &services,
         ),
         vec!["second".to_string(), "first".to_string()]
+    );
+}
+
+#[test]
+fn local_port_health_warning_requires_repeated_failures() {
+    assert_eq!(local_port_warning(8080, HEALTH_CHECK_FAILURE_THRESHOLD - 1), None);
+    assert_eq!(
+        local_port_warning(8080, HEALTH_CHECK_FAILURE_THRESHOLD).as_deref(),
+        Some("Local port 8080 is not accepting connections.")
     );
 }
 

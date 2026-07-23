@@ -1,6 +1,6 @@
 [package]
 name = "service-pilot"
-version = "1.0.14"
+version = "1.0.15"
 description = "Desktop manager for local Spring Boot and Vue development services."
 authors = ["OpenAI"]
 edition = "2021"
@@ -25,4 +25,4 @@ tauri-plugin-updater = "2"
 tokio = { version = "1", features = ["fs", "io-util", "macros", "process", "rt-multi-thread", "sync", "time"] }
 uuid = { version = "1", features = ["v4"] }
 toml = "0.8"
-windows-sys = { version = "0.61", features = ["Win32_Globalization"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Globalization", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }

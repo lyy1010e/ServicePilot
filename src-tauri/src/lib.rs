@@ -2,10 +2,7 @@ use std::{
     collections::{HashMap, HashSet},
     hash::{Hash, Hasher},
     path::{Path, PathBuf},
-    sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
-        Arc, Mutex as StdMutex,
-    },
+    sync::{atomic::{AtomicBool, AtomicU64, Ordering}, Arc},
 };
 
 use chrono::Utc;
@@ -59,7 +56,11 @@ const MAX_LOG_ENTRIES: usize = 500;
 const MAX_LOG_ENTRY_BYTES: usize = 16 * 1024;
 const MAX_LOG_EVENT_ENTRIES: usize = 50;
 const MAX_TOTAL_LOG_BYTES: usize = 64 * 1024 * 1024;
+const LOG_HISTORY_TRIM_TARGET_BYTES: usize = MAX_TOTAL_LOG_BYTES - 1024 * 1024;
 const LOG_EVENT_DEBOUNCE: Duration = Duration::from_millis(100);
+const HEALTH_CHECK_INTERVAL: Duration = Duration::from_secs(15);
+const HEALTH_CHECK_TIMEOUT: Duration = Duration::from_millis(500);
+const HEALTH_CHECK_FAILURE_THRESHOLD: u8 = 3;
 const TRAY_SHOW_ID: &str = "tray-show";
 const TRAY_QUIT_ID: &str = "tray-quit";
 

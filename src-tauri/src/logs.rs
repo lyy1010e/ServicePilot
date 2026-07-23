@@ -27,7 +27,7 @@ impl ServicePilotBackend {
             {
                 return Err("Service not found.".to_string());
             }
-            inner.log_history.remove(service_id);
+            inner.remove_log_history(service_id);
             inner.pending_log_entries.remove(service_id);
             inner.pending_log_emits.remove(service_id);
         }
@@ -61,26 +61,52 @@ impl ServicePilotBackend {
                 text: text.clone(),
             };
 
+            let merged = {
+                let mut inner = self.inner.lock().await;
+                let merged = {
+                    let history = inner.log_history.entry(service_id.to_string()).or_default();
+                    if let Some(previous) = history.last_mut() {
+                        if should_merge_log_line(previous, &entry) {
+                            let previous_bytes = previous.text.len();
+                            previous.text.push('\n');
+                            previous.text.push_str(&entry.text);
+                            trim_log_text(&mut previous.text);
+                            Some((previous.clone(), previous_bytes, previous.text.len()))
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                };
+
+                if let Some((_, previous_bytes, merged_bytes)) = &merged {
+                    inner.log_history_bytes = inner
+                        .log_history_bytes
+                        .saturating_sub(*previous_bytes)
+                        .saturating_add(*merged_bytes);
+                    inner.trim_log_history(service_id);
+                }
+                merged.map(|(entry, _, _)| entry)
+            };
+
+            if let Some(merged) = merged {
+                self.queue_log_event(merged).await;
+                self.detect_access_info(service_id, &text).await;
+                self.detect_failure_summary(service_id, &source, &text)
+                    .await;
+                continue;
+            }
+
             {
                 let mut inner = self.inner.lock().await;
-                let history = inner.log_history.entry(service_id.to_string()).or_default();
-                if let Some(previous) = history.last_mut() {
-                    if should_merge_log_line(previous, &entry) {
-                        previous.text.push('\n');
-                        previous.text.push_str(&entry.text);
-                        trim_log_text(&mut previous.text);
-                        let merged = previous.clone();
-                        trim_log_history(&mut inner.log_history);
-                        drop(inner);
-                        self.queue_log_event(merged).await;
-                        self.detect_access_info(service_id, &text).await;
-                        self.detect_failure_summary(service_id, &source, &text)
-                            .await;
-                        continue;
-                    }
-                }
-                history.push(entry.clone());
-                trim_log_history(&mut inner.log_history);
+                inner.log_history_bytes = inner.log_history_bytes.saturating_add(entry.text.len());
+                inner
+                    .log_history
+                    .entry(service_id.to_string())
+                    .or_default()
+                    .push(entry.clone());
+                inner.trim_log_history(service_id);
             }
 
             self.queue_log_event(entry.clone()).await;
@@ -105,9 +131,13 @@ impl ServicePilotBackend {
 
         {
             let mut inner = self.inner.lock().await;
-            let history = inner.log_history.entry(service_id.to_string()).or_default();
-            history.push(entry.clone());
-            trim_log_history(&mut inner.log_history);
+            inner.log_history_bytes = inner.log_history_bytes.saturating_add(entry.text.len());
+            inner
+                .log_history
+                .entry(service_id.to_string())
+                .or_default()
+                .push(entry.clone());
+            inner.trim_log_history(service_id);
         }
 
         self.queue_log_event(entry).await;
@@ -272,20 +302,61 @@ fn trim_log_text(text: &mut String) {
     text.drain(..start);
 }
 
-fn trim_log_history(history: &mut HashMap<String, Vec<LogEntry>>) {
-    for entries in history.values_mut() {
-        if entries.len() > MAX_LOG_ENTRIES {
-            let remove = entries.len() - MAX_LOG_ENTRIES;
-            entries.drain(0..remove);
-        }
+impl BackendState {
+    pub(crate) fn remove_log_history(&mut self, service_id: &str) {
+        let BackendState {
+            log_history,
+            log_history_bytes,
+            ..
+        } = self;
+        remove_log_history(log_history, log_history_bytes, service_id);
     }
 
-    let mut total_bytes = history
-        .values()
+    fn trim_log_history(&mut self, service_id: &str) {
+        let BackendState {
+            log_history,
+            log_history_bytes,
+            ..
+        } = self;
+        trim_log_history(log_history, log_history_bytes, service_id);
+    }
+}
+
+fn remove_log_history(
+    history: &mut HashMap<String, Vec<LogEntry>>,
+    total_bytes: &mut usize,
+    service_id: &str,
+) {
+    let removed_bytes = history
+        .remove(service_id)
+        .into_iter()
         .flatten()
         .map(|entry| entry.text.len())
         .sum::<usize>();
-    while total_bytes > MAX_TOTAL_LOG_BYTES {
+    *total_bytes = total_bytes.saturating_sub(removed_bytes);
+}
+
+fn trim_log_history(
+    history: &mut HashMap<String, Vec<LogEntry>>,
+    total_bytes: &mut usize,
+    service_id: &str,
+) {
+    if let Some(entries) = history.get_mut(service_id) {
+        if entries.len() > MAX_LOG_ENTRIES {
+            let remove = entries.len() - MAX_LOG_ENTRIES;
+            let removed_bytes = entries
+                .drain(0..remove)
+                .map(|entry| entry.text.len())
+                .sum::<usize>();
+            *total_bytes = total_bytes.saturating_sub(removed_bytes);
+        }
+    }
+
+    if *total_bytes <= MAX_TOTAL_LOG_BYTES {
+        return;
+    }
+
+    while *total_bytes > LOG_HISTORY_TRIM_TARGET_BYTES {
         let Some(service_id) = history
             .iter()
             .filter(|(_, entries)| !entries.is_empty())
@@ -300,7 +371,7 @@ fn trim_log_history(history: &mut HashMap<String, Vec<LogEntry>>) {
         let Some(entry) = removed else {
             break;
         };
-        total_bytes = total_bytes.saturating_sub(entry.text.len());
+        *total_bytes = total_bytes.saturating_sub(entry.text.len());
     }
 }
 
@@ -335,11 +406,27 @@ mod tests {
                 .map(|id| entry(id, "line".to_string()))
                 .collect(),
         )]);
+        let mut total_bytes = (MAX_LOG_ENTRIES + 1) * "line".len();
 
-        trim_log_history(&mut history);
+        trim_log_history(&mut history, &mut total_bytes, "service-1");
 
         let entries = history.get("service-1").expect("service history exists");
         assert_eq!(entries.len(), MAX_LOG_ENTRIES);
         assert_eq!(entries[0].id, "1");
+        assert_eq!(total_bytes, MAX_LOG_ENTRIES * "line".len());
+    }
+
+    #[test]
+    fn remove_log_history_updates_tracked_byte_count() {
+        let mut history = HashMap::from([(
+            "service-1".to_string(),
+            vec![entry(1, "first".to_string()), entry(2, "second".to_string())],
+        )]);
+        let mut total_bytes = "first".len() + "second".len();
+
+        remove_log_history(&mut history, &mut total_bytes, "service-1");
+
+        assert!(history.is_empty());
+        assert_eq!(total_bytes, 0);
     }
 }

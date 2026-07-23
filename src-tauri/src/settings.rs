@@ -93,6 +93,8 @@ impl ServicePilotBackend {
             inner.settings = parsed.settings.clone();
             inner.runtime.clear();
             inner.log_history.clear();
+            inner.log_history_bytes = 0;
+            inner.health_failures.clear();
             inner.processes.clear();
             let services = inner.services.clone();
             for service in services {
@@ -108,6 +110,7 @@ impl ServicePilotBackend {
                         message: None,
                         detected_port: None,
                         detected_url: None,
+                        health_warning: None,
                         failure_summary: None,
                         failure_category: None,
                     },

@@ -337,7 +337,6 @@ fn update_to_info(update: &Update) -> AppUpdateInfo {
 #[tauri::command]
 pub(crate) async fn app_check_update(
     app: AppHandle<Wry>,
-    update_state: State<'_, UpdateState>,
 ) -> BackendResult<Option<AppUpdateInfo>> {
     if cfg!(debug_assertions) {
         return Ok(None);
@@ -348,38 +347,21 @@ pub(crate) async fn app_check_update(
         .check()
         .await
         .map_err(|error| error.to_string())?;
-    let info = update.as_ref().map(update_to_info);
-    let mut pending = update_state
-        .pending
-        .lock()
-        .map_err(|_| "Failed to lock update state.".to_string())?;
-    *pending = update;
-    Ok(info)
+    Ok(update.as_ref().map(update_to_info))
 }
 
 #[tauri::command]
 pub(crate) async fn app_install_update(
     app: AppHandle<Wry>,
     state: State<'_, AppState>,
-    update_state: State<'_, UpdateState>,
 ) -> BackendResult<()> {
-    let update = {
-        let mut pending = update_state
-            .pending
-            .lock()
-            .map_err(|_| "Failed to lock update state.".to_string())?;
-        pending.take()
-    };
-    let update = if let Some(update) = update {
-        update
-    } else {
-        app.updater()
-            .map_err(|error| error.to_string())?
-            .check()
-            .await
-            .map_err(|error| error.to_string())?
-            .ok_or_else(|| "No verified update is available.".to_string())?
-    };
+    let update = app
+        .updater()
+        .map_err(|error| error.to_string())?
+        .check()
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "No verified update is available.".to_string())?;
 
     // 停止服务失败不应阻止更新
     let _ = state.backend.shutdown_without_resume().await;

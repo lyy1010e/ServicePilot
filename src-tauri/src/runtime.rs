@@ -130,6 +130,12 @@ impl ServicePilotBackend {
             .map_err(|error| format!("{error_context}: {error}"))?;
         let pid = child.id().unwrap_or_default();
 
+        if let Err(error) = self.assign_to_process_job(pid) {
+            kill_process_tree(pid).await;
+            let _ = child.wait().await;
+            return Err(error);
+        }
+
         if let Some(service_id) = service_id {
             if !self.track_startup_helper_process(service_id, pid).await {
                 kill_process_tree(pid).await;
@@ -246,7 +252,7 @@ impl ServicePilotBackend {
             }
             let clear_logs_on_start = inner.settings.clear_logs_on_restart;
             if clear_logs_on_start {
-                inner.log_history.remove(service_id);
+                inner.remove_log_history(service_id);
             }
             (service, inner.settings.clone(), clear_logs_on_start)
         };
@@ -312,10 +318,12 @@ impl ServicePilotBackend {
                     message: Some(launch.command_line.clone()),
                     detected_port: None,
                     detected_url: None,
+                    health_warning: None,
                     failure_summary: None,
                     failure_category: None,
                 },
             );
+            inner.health_failures.remove(service_id);
         }
         self.emit_snapshot().await;
         self.append_log(
@@ -357,6 +365,13 @@ impl ServicePilotBackend {
         };
 
         let pid = child.id().unwrap_or_default();
+
+        if let Err(error) = self.assign_to_process_job(pid) {
+            kill_process_tree(pid).await;
+            self.mark_process_failed(service_id, error.clone(), FailureCategory::Process)
+                .await;
+            return Err(error);
+        }
 
         let should_keep_process = {
             let mut inner = self.inner.lock().await;
@@ -407,6 +422,7 @@ impl ServicePilotBackend {
             let service_kind = service_kind.clone();
             let service_name = service_name.clone();
             let main_class = main_class.clone();
+            let pid = pid;
             tauri::async_runtime::spawn(async move {
                 let mut reader = BufReader::new(stdout);
                 let mut bytes = Vec::new();
@@ -420,7 +436,7 @@ impl ServicePilotBackend {
                     if matches!(service_kind, ServiceKind::Spring)
                         && is_spring_started_line(&line, &service_name, main_class.as_deref())
                     {
-                        backend.mark_service_running(&service_id).await;
+                        backend.mark_service_running(&service_id, pid).await;
                     }
                     backend
                         .append_log(&service_id, LogSource::Stdout, line)
@@ -435,6 +451,7 @@ impl ServicePilotBackend {
             let service_kind = service_kind.clone();
             let service_name = service_name.clone();
             let main_class = main_class.clone();
+            let pid = pid;
             tauri::async_runtime::spawn(async move {
                 let mut reader = BufReader::new(stderr);
                 let mut bytes = Vec::new();
@@ -447,7 +464,7 @@ impl ServicePilotBackend {
                     if matches!(service_kind, ServiceKind::Spring)
                         && is_spring_started_line(&line, &service_name, main_class.as_deref())
                     {
-                        backend.mark_service_running(&service_id).await;
+                        backend.mark_service_running(&service_id, pid).await;
                     }
                     backend
                         .append_log(&service_id, LogSource::Stderr, line)
@@ -460,7 +477,7 @@ impl ServicePilotBackend {
         let service_id = service_id.to_string();
         tauri::async_runtime::spawn(async move {
             let status = child.wait().await.ok();
-            backend.handle_process_exit(&service_id, status).await;
+            backend.handle_process_exit(&service_id, pid, status).await;
         });
 
         Ok(())
@@ -590,7 +607,7 @@ impl ServicePilotBackend {
             let mut inner = self.inner.lock().await;
             let clear_logs = inner.settings.clear_logs_on_restart;
             if clear_logs {
-                inner.log_history.remove(service_id);
+                inner.remove_log_history(service_id);
             }
             clear_logs
         };
@@ -697,11 +714,13 @@ impl ServicePilotBackend {
         create_launch_spec(service, settings)
     }
 
-    pub(crate) async fn mark_service_running(&self, service_id: &str) {
+    pub(crate) async fn mark_service_running(&self, service_id: &str, pid: u32) {
         let mut inner = self.inner.lock().await;
-        if let Some(runtime) = inner.runtime.get_mut(service_id) {
-            if matches!(runtime.status, RuntimeStatus::Starting) {
-                runtime.status = RuntimeStatus::Running;
+        if Self::managed_process_matches(&inner.processes, service_id, pid) {
+            if let Some(runtime) = inner.runtime.get_mut(service_id) {
+                if matches!(runtime.status, RuntimeStatus::Starting) {
+                    runtime.status = RuntimeStatus::Running;
+                }
             }
         }
         drop(inner);
@@ -711,12 +730,17 @@ impl ServicePilotBackend {
     pub(crate) async fn handle_process_exit(
         &self,
         service_id: &str,
+        pid: u32,
         status: Option<std::process::ExitStatus>,
     ) {
         let previous = {
             let mut inner = self.inner.lock().await;
+            if !Self::managed_process_matches(&inner.processes, service_id, pid) {
+                return;
+            }
             let previous = inner.runtime.get(service_id).cloned();
             inner.processes.remove(service_id);
+            inner.health_failures.remove(service_id);
             previous
         };
 
@@ -743,6 +767,7 @@ impl ServicePilotBackend {
                 runtime.exit_code = code;
                 runtime.pid = None;
                 runtime.elapsed_seconds = elapsed_seconds;
+                runtime.health_warning = None;
                 runtime.message = Some(match code {
                     Some(value) => format!("Exited with code {value}"),
                     None => "Process exited.".to_string(),
@@ -781,6 +806,7 @@ impl ServicePilotBackend {
                 runtime.status = RuntimeStatus::Failed;
                 runtime.exit_code = None;
                 runtime.message = Some(message.clone());
+                runtime.health_warning = None;
                 runtime.failure_summary = Some(message.clone());
                 runtime.failure_category = Some(category);
             }
@@ -818,6 +844,111 @@ impl ServicePilotBackend {
             inner.runtime.get(service_id).map(|runtime| &runtime.status),
             Some(RuntimeStatus::Starting)
         )
+    }
+
+    fn assign_to_process_job(&self, pid: u32) -> BackendResult<()> {
+        #[cfg(windows)]
+        {
+            self.process_job.assign(pid)
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = pid;
+            Ok(())
+        }
+    }
+
+    pub(crate) async fn monitor_local_service_health(&self) {
+        loop {
+            sleep(HEALTH_CHECK_INTERVAL).await;
+            let targets = self.local_health_targets().await;
+            let mut checks = tokio::task::JoinSet::new();
+            for (service_id, pid, port) in targets {
+                checks.spawn_blocking(move || {
+                    let address = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+                    let healthy = std::net::TcpStream::connect_timeout(&address, HEALTH_CHECK_TIMEOUT)
+                        .is_ok();
+                    (service_id, pid, port, healthy)
+                });
+            }
+
+            while let Some(result) = checks.join_next().await {
+                if let Ok((service_id, pid, port, healthy)) = result {
+                    self.record_local_port_health(&service_id, pid, port, healthy)
+                        .await;
+                }
+            }
+        }
+    }
+
+    async fn local_health_targets(&self) -> Vec<(String, u32, u16)> {
+        let inner = self.inner.lock().await;
+        inner
+            .services
+            .iter()
+            .filter_map(|service| {
+                let runtime = inner.runtime.get(&service.id)?;
+                if !matches!(runtime.status, RuntimeStatus::Starting | RuntimeStatus::Running) {
+                    return None;
+                }
+                let pid = inner.processes.get(&service.id)?.pid;
+                let port = runtime.detected_port.or(service.port)?;
+                Some((service.id.clone(), pid, port))
+            })
+            .collect()
+    }
+
+    async fn record_local_port_health(&self, service_id: &str, pid: u32, port: u16, healthy: bool) {
+        let changed = {
+            let mut inner = self.inner.lock().await;
+            if !Self::managed_process_matches(&inner.processes, service_id, pid) {
+                return;
+            }
+            if !matches!(
+                inner.runtime.get(service_id).map(|runtime| &runtime.status),
+                Some(RuntimeStatus::Starting | RuntimeStatus::Running)
+            ) {
+                return;
+            }
+
+            if healthy {
+                inner.health_failures.remove(service_id);
+                let Some(runtime) = inner.runtime.get_mut(service_id) else {
+                    return;
+                };
+                let was_starting = matches!(runtime.status, RuntimeStatus::Starting);
+                let had_warning = runtime.health_warning.take().is_some();
+                if was_starting {
+                    runtime.status = RuntimeStatus::Running;
+                }
+                was_starting || had_warning
+            } else {
+                let failures = inner
+                    .health_failures
+                    .entry(service_id.to_string())
+                    .or_default();
+                *failures = failures.saturating_add(1);
+                if *failures < HEALTH_CHECK_FAILURE_THRESHOLD {
+                    false
+                } else {
+                    let warning = local_port_warning(port, *failures)
+                        .expect("health warning requires the failure threshold");
+                    let Some(runtime) = inner.runtime.get_mut(service_id) else {
+                        return;
+                    };
+                    if runtime.health_warning.as_deref() == Some(warning.as_str()) {
+                        false
+                    } else {
+                        runtime.health_warning = Some(warning);
+                        true
+                    }
+                }
+            }
+        };
+
+        if changed {
+            self.emit_snapshot().await;
+        }
     }
 
     pub(crate) async fn log_startup_canceled(&self, service_id: &str) {
@@ -887,6 +1018,11 @@ impl ServicePilotBackend {
         self.emit_snapshot().await;
         Ok(())
     }
+}
+
+pub(crate) fn local_port_warning(port: u16, failures: u8) -> Option<String> {
+    (failures >= HEALTH_CHECK_FAILURE_THRESHOLD)
+        .then(|| format!("Local port {port} is not accepting connections."))
 }
 
 async fn read_limited_process_line<R: AsyncBufRead + Unpin>(

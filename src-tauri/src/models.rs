@@ -31,15 +31,13 @@ pub(crate) struct AppState {
     pub(crate) backend: Arc<ServicePilotBackend>,
 }
 
-pub(crate) struct UpdateState {
-    pub(crate) pending: StdMutex<Option<Update>>,
-}
-
 #[derive(Clone)]
 pub(crate) struct ServicePilotBackend {
     pub(crate) app: AppHandle<Wry>,
     pub(crate) state_file: PathBuf,
     pub(crate) resume_file: PathBuf,
+    #[cfg(windows)]
+    pub(crate) process_job: ProcessJob,
     pub(crate) inner: Arc<Mutex<BackendState>>,
     pub(crate) last_snapshot_emitted: Arc<Mutex<std::time::Instant>>,
 }
@@ -50,6 +48,8 @@ pub(crate) struct BackendState {
     pub(crate) settings: AppSettings,
     pub(crate) runtime: HashMap<String, RuntimeState>,
     pub(crate) log_history: HashMap<String, Vec<LogEntry>>,
+    pub(crate) log_history_bytes: usize,
+    pub(crate) health_failures: HashMap<String, u8>,
     pub(crate) pending_log_entries: HashMap<String, Vec<LogEntry>>,
     pub(crate) pending_log_emits: HashSet<String>,
     pub(crate) processes: HashMap<String, ManagedProcess>,
@@ -173,6 +173,7 @@ pub(crate) struct RuntimeState {
     pub(crate) message: Option<String>,
     pub(crate) detected_port: Option<u16>,
     pub(crate) detected_url: Option<String>,
+    pub(crate) health_warning: Option<String>,
     pub(crate) failure_summary: Option<String>,
     pub(crate) failure_category: Option<FailureCategory>,
 }

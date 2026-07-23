@@ -1692,7 +1692,7 @@ textarea {
   z-index: 1;
   height: var(--service-table-header-height);
   min-height: var(--service-table-header-height);
-  padding: 0 16px;
+  padding: 0 18px;
   color: var(--text-soft);
   font-size: 12px;
   font-weight: 500;
@@ -1728,6 +1728,7 @@ textarea {
   width: 16px;
   height: 16px;
   margin: 0;
+  transform: translateY(2px);
   accent-color: var(--primary);
   cursor: pointer;
 }
@@ -2006,6 +2007,11 @@ textarea {
   background: transparent;
 }
 
+.status-badge--warning {
+  color: var(--amber);
+  background: transparent;
+}
+
 .status-badge__dot--running {
   background: var(--green);
 }
@@ -2019,6 +2025,10 @@ textarea {
 }
 
 .status-badge__dot--starting {
+  background: var(--amber);
+}
+
+.status-badge__dot--warning {
   background: var(--amber);
 }
 

@@ -217,6 +217,7 @@ impl ServicePilotBackend {
                     message,
                     detected_port: None,
                     detected_url: None,
+                    health_warning: None,
                     failure_summary: None,
                     failure_category: None,
                 },
@@ -319,6 +320,7 @@ impl ServicePilotBackend {
                     message: None,
                     detected_port: None,
                     detected_url: None,
+                    health_warning: None,
                     failure_summary: None,
                     failure_category: None,
                 },
@@ -510,6 +512,7 @@ impl ServicePilotBackend {
                     message: None,
                     detected_port: None,
                     detected_url: None,
+                    health_warning: None,
                     failure_summary: None,
                     failure_category: None,
                 },
@@ -544,9 +547,10 @@ impl ServicePilotBackend {
                         elapsed_seconds: None,
                         exit_code: None,
                         message: None,
-                        detected_port: None,
-                        detected_url: None,
-                        failure_summary: None,
+                    detected_port: None,
+                    detected_url: None,
+                    health_warning: None,
+                    failure_summary: None,
                         failure_category: None,
                     },
                 );
@@ -574,7 +578,8 @@ impl ServicePilotBackend {
                 group.service_ids.retain(|id| id != service_id);
             });
             inner.runtime.remove(service_id);
-            inner.log_history.remove(service_id);
+            inner.remove_log_history(service_id);
+            inner.health_failures.remove(service_id);
             inner.processes.remove(service_id);
         }
         self.persist_state().await?;
