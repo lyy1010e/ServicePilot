@@ -1,6 +1,7 @@
 use super::*;
 use serde_json::json;
 use crate::runtime::local_port_warning;
+use crate::store::snapshot_emit_delay;
 
 fn service(
     launch_type: LaunchType,
@@ -94,6 +95,15 @@ fn local_port_health_warning_requires_repeated_failures() {
         local_port_warning(8080, HEALTH_CHECK_FAILURE_THRESHOLD).as_deref(),
         Some("Local port 8080 is not accepting connections.")
     );
+}
+
+#[test]
+fn snapshot_throttle_defers_instead_of_dropping_recent_updates() {
+    assert_eq!(
+        snapshot_emit_delay(Duration::from_millis(12)),
+        Some(Duration::from_millis(38))
+    );
+    assert_eq!(snapshot_emit_delay(Duration::from_millis(50)), None);
 }
 
 #[tokio::test]

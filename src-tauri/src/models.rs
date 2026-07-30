@@ -40,6 +40,7 @@ pub(crate) struct ServicePilotBackend {
     pub(crate) process_job: ProcessJob,
     pub(crate) inner: Arc<Mutex<BackendState>>,
     pub(crate) last_snapshot_emitted: Arc<Mutex<std::time::Instant>>,
+    pub(crate) snapshot_emit_pending: Arc<Mutex<bool>>,
 }
 
 pub(crate) struct BackendState {

@@ -44,6 +44,11 @@ pub(crate) async fn clear_resume_state_file(resume_file: &Path) -> BackendResult
     }
 }
 
+pub(crate) fn snapshot_emit_delay(elapsed: Duration) -> Option<Duration> {
+    (elapsed < Duration::from_millis(50))
+        .then(|| Duration::from_millis(50).saturating_sub(elapsed))
+}
+
 impl ServicePilotBackend {
     pub(crate) async fn new(app: AppHandle<Wry>) -> BackendResult<Self> {
         let user_data_path = app
@@ -62,6 +67,7 @@ impl ServicePilotBackend {
             #[cfg(windows)]
             process_job,
             last_snapshot_emitted: Arc::new(Mutex::new(std::time::Instant::now())),
+            snapshot_emit_pending: Arc::new(Mutex::new(false)),
             inner: Arc::new(Mutex::new(BackendState {
                 services: Vec::new(),
                 groups: Vec::new(),
@@ -221,11 +227,42 @@ impl ServicePilotBackend {
 
     pub(crate) async fn emit_snapshot(&self) {
         let now = std::time::Instant::now();
-        let last = *self.last_snapshot_emitted.lock().await;
-        if now.duration_since(last).as_millis() < 50 {
+        let delay = {
+            let mut last = self.last_snapshot_emitted.lock().await;
+            let elapsed = now.duration_since(*last);
+            if let Some(delay) = snapshot_emit_delay(elapsed) {
+                Some(delay)
+            } else {
+                *last = now;
+                None
+            }
+        };
+
+        let Some(delay) = delay else {
+            self.emit_snapshot_now().await;
+            return;
+        };
+
+        let mut pending = self.snapshot_emit_pending.lock().await;
+        if *pending {
             return;
         }
-        *self.last_snapshot_emitted.lock().await = now;
+        *pending = true;
+        drop(pending);
+
+        let backend = self.clone();
+        tauri::async_runtime::spawn(async move {
+            sleep(delay).await;
+            {
+                let mut last = backend.last_snapshot_emitted.lock().await;
+                *last = std::time::Instant::now();
+            }
+            *backend.snapshot_emit_pending.lock().await = false;
+            backend.emit_snapshot_now().await;
+        });
+    }
+
+    async fn emit_snapshot_now(&self) {
         let snapshot = self.get_snapshot().await;
         let _ = self.app.emit("snapshot:update", snapshot);
     }
