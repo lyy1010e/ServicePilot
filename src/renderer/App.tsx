@@ -2410,7 +2410,7 @@ export function App() {
 
         return {
           ...current,
-          name: shouldUseDetectedName ? detected.name : current.name,
+          name: current.id && shouldUseDetectedName ? detected.name : current.name,
           serviceKind: 'spring',
           launchType: 'java-main',
           workingDir: picked,
@@ -2460,6 +2460,11 @@ export function App() {
 
         setSelectedLogServiceId(service.id);
         setServiceForm(null);
+        await refreshSnapshot();
+        setFeedback({
+          message: copy.servicesImported(1),
+          tone: 'success'
+        });
       });
       return;
     }

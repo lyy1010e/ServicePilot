@@ -189,6 +189,42 @@ describe('App service flows', () => {
     );
   });
 
+  it('imports a detected Spring project instead of saving an incomplete Java Main form', async () => {
+    const imported = springService();
+    const importedSnapshot = snapshot({
+      services: [imported],
+      runtime: {
+        [imported.id]: {
+          serviceId: imported.id,
+          status: 'stopped'
+        }
+      }
+    });
+    const { api, user } = await renderApp(snapshot(), (nextApi) => {
+      vi.mocked(nextApi.dialog.pickDirectory).mockResolvedValue('D:\\workspace\\gateway');
+      vi.mocked(nextApi.services.detectProject).mockResolvedValue({
+        name: 'gateway',
+        serviceKind: 'spring',
+        launchType: 'java-main',
+        command: ''
+      });
+      vi.mocked(nextApi.services.importProject).mockResolvedValue(imported);
+      vi.mocked(nextApi.app.getSnapshot)
+        .mockResolvedValueOnce(snapshot())
+        .mockResolvedValueOnce(importedSnapshot);
+    });
+
+    await user.click(screen.getAllByRole('button', { name: 'Add Service' })[0]);
+    await waitFor(() => expect(api.services.detectProject).toHaveBeenCalledWith('D:\\workspace\\gateway'));
+
+    expect(screen.getByPlaceholderText('For example: gateway / user-service')).toHaveValue('');
+    await user.click(screen.getByRole('button', { name: 'Save Service' }));
+
+    await waitFor(() => expect(api.services.importProject).toHaveBeenCalledWith('D:\\workspace\\gateway'));
+    expect(api.services.save).not.toHaveBeenCalled();
+    expect(await screen.findByText('Imported 1 services')).toBeInTheDocument();
+  });
+
   it('starts an existing stopped service from the service list', async () => {
     const service = springService();
     const { api, user } = await renderApp(
