@@ -1,6 +1,27 @@
 use super::*;
 use crate::service_detection::*;
 
+pub(crate) fn merge_imported_idea_settings(
+    current_settings: &AppSettings,
+    imported_settings: &AppSettings,
+) -> AppSettings {
+    AppSettings {
+        language: AppLanguage::ZhCn,
+        maven_settings_file: if imported_settings.maven_settings_file.is_empty() {
+            current_settings.maven_settings_file.clone()
+        } else {
+            imported_settings.maven_settings_file.clone()
+        },
+        maven_local_repository: if imported_settings.maven_local_repository.is_empty() {
+            current_settings.maven_local_repository.clone()
+        } else {
+            imported_settings.maven_local_repository.clone()
+        },
+        clear_logs_on_restart: current_settings.clear_logs_on_restart,
+        resume_services_on_launch: current_settings.resume_services_on_launch,
+    }
+}
+
 impl ServicePilotBackend {
     pub(crate) async fn import_idea_project(
         &self,
@@ -100,26 +121,11 @@ impl ServicePilotBackend {
             env.entry("JDK_HOME".to_string()).or_insert(java_home);
         }
 
-        let prepared_settings = AppSettings {
-            language: AppLanguage::ZhCn,
-            maven_settings_file: if imported_settings.maven_settings_file.is_empty() {
-                self.inner.lock().await.settings.maven_settings_file.clone()
-            } else {
-                imported_settings.maven_settings_file.clone()
-            },
-            maven_local_repository: if imported_settings.maven_local_repository.is_empty() {
-                self.inner
-                    .lock()
-                    .await
-                    .settings
-                    .maven_local_repository
-                    .clone()
-            } else {
-                imported_settings.maven_local_repository.clone()
-            },
-            clear_logs_on_restart: self.inner.lock().await.settings.clear_logs_on_restart,
-            resume_services_on_launch: self.inner.lock().await.settings.resume_services_on_launch,
+        let current_settings = {
+            let inner = self.inner.lock().await;
+            inner.settings.clone()
         };
+        let prepared_settings = merge_imported_idea_settings(&current_settings, &imported_settings);
 
         let classpath = if prepare_classpath {
             self.build_idea_java_main_classpath(&working_dir, &prepared_settings, &env, None)
@@ -879,10 +885,16 @@ impl ServicePilotBackend {
                 }
             }
 
-            let count_before = self.inner.lock().await.services.len();
+            let count_before = {
+                let inner = self.inner.lock().await;
+                inner.services.len()
+            };
             match self.import_project(&item.working_dir).await {
                 Ok(service) => {
-                    let count_after = self.inner.lock().await.services.len();
+                    let count_after = {
+                        let inner = self.inner.lock().await;
+                        inner.services.len()
+                    };
                     if count_after > count_before {
                         results.push(service);
                     }

@@ -464,31 +464,36 @@ pub(crate) fn find_module_dir_by_main_class(
     }
     relative_source.set_extension("java");
 
-    find_source_file(project_root, &relative_source).and_then(find_ancestor_with_pom)
+    find_maven_module_with_source(project_root, &relative_source)
 }
 
-pub(crate) fn find_source_file(root: &Path, expected_suffix: &Path) -> Option<PathBuf> {
-    let entries = std::fs::read_dir(root).ok()?;
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            if let Some(found) = find_source_file(&path, expected_suffix) {
-                return Some(found);
-            }
+fn find_maven_module_with_source(project_root: &Path, expected_source: &Path) -> Option<PathBuf> {
+    let mut modules = vec![project_root.to_path_buf()];
+    let mut visited = HashSet::new();
+
+    while let Some(module_dir) = modules.pop() {
+        if !visited.insert(module_dir.clone()) {
             continue;
         }
-        if path.ends_with(expected_suffix) {
-            return Some(path);
+        if module_dir.join(expected_source).is_file() {
+            return Some(module_dir);
         }
-    }
-    None
-}
 
-pub(crate) fn find_ancestor_with_pom(path: PathBuf) -> Option<PathBuf> {
-    for current in path.ancestors() {
-        if current.join("pom.xml").exists() {
-            return Some(current.to_path_buf());
+        let pom_path = module_dir.join("pom.xml");
+        let Ok(pom) = std::fs::read_to_string(pom_path) else {
+            continue;
+        };
+        for child in crate::service_detection::extract_maven_modules(&pom) {
+            let child_path = Path::new(&child);
+            if child_path.is_absolute() || child_path.starts_with("..") {
+                continue;
+            }
+            let child_module = module_dir.join(child_path);
+            if child_module.is_dir() && child_module.join("pom.xml").is_file() {
+                modules.push(child_module);
+            }
         }
     }
+
     None
 }

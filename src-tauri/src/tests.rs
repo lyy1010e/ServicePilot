@@ -1,6 +1,7 @@
 use super::*;
 use serde_json::json;
 use crate::runtime::local_port_warning;
+use crate::services::merge_imported_idea_settings;
 use crate::store::snapshot_emit_delay;
 
 fn service(
@@ -104,6 +105,59 @@ fn snapshot_throttle_defers_instead_of_dropping_recent_updates() {
         Some(Duration::from_millis(38))
     );
     assert_eq!(snapshot_emit_delay(Duration::from_millis(50)), None);
+}
+
+#[test]
+fn idea_import_resolves_main_class_through_declared_maven_modules_only() {
+    let root = std::env::temp_dir().join(format!("service-pilot-test-{}", new_id()));
+    let application = root.join("platform").join("application");
+    let source = application.join("src/main/java/com/example/Application.java");
+    std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+    std::fs::write(
+        root.join("pom.xml"),
+        "<project><modules><module>platform</module></modules></project>",
+    )
+    .unwrap();
+    std::fs::create_dir_all(root.join("platform")).unwrap();
+    std::fs::write(
+        root.join("platform/pom.xml"),
+        "<project><modules><module>application</module></modules></project>",
+    )
+    .unwrap();
+    std::fs::write(application.join("pom.xml"), "<project />").unwrap();
+    std::fs::write(&source, "class Application {} ").unwrap();
+
+    assert_eq!(
+        find_module_dir_by_main_class(&root, "com.example.Application"),
+        Some(application)
+    );
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn idea_import_settings_use_one_current_settings_snapshot() {
+    let current = AppSettings {
+        language: AppLanguage::EnUs,
+        maven_settings_file: "C:\\maven\\settings.xml".to_string(),
+        maven_local_repository: "D:\\maven-repo".to_string(),
+        clear_logs_on_restart: false,
+        resume_services_on_launch: true,
+    };
+    let imported = AppSettings {
+        language: AppLanguage::ZhCn,
+        maven_settings_file: String::new(),
+        maven_local_repository: "E:\\idea-repo".to_string(),
+        clear_logs_on_restart: true,
+        resume_services_on_launch: false,
+    };
+
+    let merged = merge_imported_idea_settings(&current, &imported);
+    assert!(matches!(merged.language, AppLanguage::ZhCn));
+    assert_eq!(merged.maven_settings_file, "C:\\maven\\settings.xml");
+    assert_eq!(merged.maven_local_repository, "E:\\idea-repo");
+    assert!(!merged.clear_logs_on_restart);
+    assert!(merged.resume_services_on_launch);
 }
 
 #[tokio::test]
