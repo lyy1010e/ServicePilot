@@ -1233,8 +1233,8 @@ textarea {
 }
 
 .pilot-settings-page__header {
-  width: min(100%, 760px);
-  padding: 0 0 20px;
+  width: min(100%, 860px);
+  padding: 0 0 12px;
   flex-shrink: 0;
 }
 
@@ -1248,11 +1248,11 @@ textarea {
 .pilot-settings-page__body {
   flex: 1 1 auto;
   overflow: hidden;
-  width: min(100%, 760px);
+  width: min(100%, 860px);
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 22px;
+  gap: 16px;
 }
 
 .pilot-settings-group {
@@ -1260,8 +1260,21 @@ textarea {
   flex-direction: column;
   gap: 12px;
   width: 100%;
-  padding-bottom: 22px;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+  padding-bottom: 20px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+}
+
+.pilot-settings-group > .field + .field {
+  margin-top: 4px;
+}
+
+.pilot-settings-group--logs {
+  gap: 8px;
+  padding-bottom: 14px;
+}
+
+.pilot-settings-group--logs .toggle-field + .toggle-field {
+  margin-top: 8px;
 }
 
 .pilot-settings-section__heading {
@@ -1274,7 +1287,7 @@ textarea {
   position: relative;
   padding-left: 9px;
   color: var(--text-main);
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 700;
 }
 
@@ -1300,8 +1313,8 @@ textarea {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 46px;
   align-items: stretch;
-  width: min(100%, 640px);
-  min-height: 40px;
+  width: 100%;
+  height: 44px;
   border-radius: 8px;
   background: rgba(2, 8, 18, 0.26);
   box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.16);
@@ -1318,6 +1331,7 @@ textarea {
 
 .settings-path-field input {
   min-width: 0;
+  height: 44px;
   padding: 0 16px;
   border-radius: 0;
   background: transparent;
@@ -1331,6 +1345,8 @@ textarea {
 .settings-path-field__button {
   display: grid;
   place-items: center;
+  width: 46px;
+  height: 44px;
   color: var(--text-soft);
   background: rgba(255, 255, 255, 0.018);
   border-left: 1px solid rgba(148, 163, 184, 0.14);
@@ -2939,12 +2955,16 @@ textarea {
   width: 680px;
 }
 
+.modal--service {
+  max-height: min(94vh, 960px);
+}
+
 .modal-body--scan {
   display: flex;
   flex-direction: column;
   gap: 12px;
   max-height: 400px;
-  overflow: hidden;
+  overflow-y: auto;
 }
 
 .scan-toolbar {
@@ -2959,8 +2979,7 @@ textarea {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  overflow: auto;
-  flex: 1;
+  flex: 0 0 auto;
 }
 
 .scan-row {
@@ -2988,11 +3007,27 @@ textarea {
   flex-shrink: 0;
 }
 
+.scan-row__info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+}
+
+.scan-row__headline {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
 .scan-row__name {
   font-weight: 600;
   font-size: 14px;
-  min-width: 120px;
-  flex-shrink: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .scan-row__port {
@@ -3008,7 +3043,6 @@ textarea {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  margin-left: auto;
   min-width: 0;
 }
 
@@ -3092,6 +3126,47 @@ textarea {
   padding: 0 24px 20px;
 }
 
+.modal--service .modal-header,
+.modal--scan .modal-header {
+  flex: 0 0 auto;
+}
+
+.modal--service .modal-body,
+.modal--scan .modal-body {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.2) transparent;
+  overscroll-behavior: contain;
+}
+
+.modal--service .modal-body:hover,
+.modal--scan .modal-body:hover {
+  scrollbar-color: rgba(148, 163, 184, 0.45) transparent;
+}
+
+.modal--service .modal-body::-webkit-scrollbar,
+.modal--scan .modal-body::-webkit-scrollbar {
+  width: 6px;
+}
+
+.modal--service .modal-body::-webkit-scrollbar-thumb,
+.modal--scan .modal-body::-webkit-scrollbar-thumb {
+  border-radius: 6px;
+  background: rgba(148, 163, 184, 0.2);
+}
+
+.modal--service .modal-body:hover::-webkit-scrollbar-thumb,
+.modal--scan .modal-body:hover::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.45);
+}
+
+.modal--service .modal-body {
+  padding-bottom: 14px;
+}
+
+.modal--scan .modal-body {
+  padding-bottom: 24px;
+}
+
 .modal-close {
   width: 32px;
   height: 32px;
@@ -3115,6 +3190,12 @@ textarea {
   justify-content: flex-end;
   gap: 10px;
   border-top: 1px solid rgba(148, 163, 184, 0.1);
+}
+
+.modal--service .modal-footer,
+.modal--scan .modal-footer {
+  flex: 0 0 70px;
+  padding: 0 24px;
 }
 
 .modal-footer--split .modal-btn--danger:first-child {
@@ -3214,12 +3295,28 @@ textarea {
   cursor: pointer;
   user-select: none;
   width: fit-content;
-  min-height: 32px;
+  min-height: 28px;
   display: flex;
   align-items: center;
+  gap: 8px;
+  list-style: none;
   color: var(--text-soft);
   font-size: 13px;
   font-weight: 700;
+}
+
+.service-advanced summary::-webkit-details-marker {
+  display: none;
+}
+
+.service-advanced summary::after {
+  content: '↓';
+  font-size: 14px;
+  font-weight: 400;
+}
+
+.service-advanced[open] summary::after {
+  content: '↑';
 }
 
 .service-advanced summary:hover {
@@ -3233,6 +3330,15 @@ textarea {
   padding-top: 10px;
 }
 
+.modal--service .service-advanced__grid {
+  row-gap: 10px;
+  padding-bottom: 12px;
+}
+
+.service-advanced__grid .field {
+  min-width: 0;
+}
+
 .field-row {
   gap: 10px;
 }
@@ -3244,13 +3350,16 @@ textarea {
 .field-row--project input {
   flex: 1 1 auto;
   min-width: 0;
+  height: 44px;
+  text-overflow: ellipsis;
 }
 
 .field-row--project .action-button {
-  min-height: 40px;
-  min-width: 98px;
+  height: 44px;
+  min-height: 44px;
+  width: 132px;
   border-radius: 8px;
-  flex: 0 0 auto;
+  flex: 0 0 132px;
 }
 
 .membership-panel {
@@ -3528,13 +3637,19 @@ textarea {
 
 .toggle-field strong {
   color: var(--text-main);
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .toggle-field small {
   color: var(--text-muted);
   font-size: 12px;
   line-height: 1.35;
+}
+
+.pilot-settings-page .toggle-field small {
+  color: var(--text-soft);
+  opacity: 0.88;
+  font-size: 12.5px;
 }
 
 .pilot-settings-page .toggle-field {
@@ -3892,13 +4007,14 @@ textarea {
 
 .service-groups-select {
   display: flex;
+  align-items: center;
   flex-wrap: wrap;
-  gap: 7px;
-  padding: 7px;
+  gap: 6px;
+  padding: 4px 6px;
   background: rgba(5, 11, 22, 0.3);
   border-radius: 8px;
   border: 1px solid rgba(148, 163, 184, 0.14);
-  min-height: 40px;
+  min-height: 38px;
 }
 
 .service-groups-select__empty {
@@ -3911,7 +4027,7 @@ textarea {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 9px;
+  padding: 3px 8px;
   background: rgba(255, 255, 255, 0.025);
   border: 1px solid rgba(148, 163, 184, 0.14);
   border-radius: 6px;
@@ -3936,10 +4052,11 @@ textarea {
   display: none;
 }
 
-.service-groups-select__count {
+.field .service-groups-select__count {
   font-size: 11px;
+  font-weight: 400;
   color: var(--text-muted);
-  background: var(--surface-bg-strong);
-  padding: 1px 6px;
+  background: rgba(148, 163, 184, 0.08);
+  padding: 0 5px;
   border-radius: 10px;
 }

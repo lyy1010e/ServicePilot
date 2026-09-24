@@ -286,7 +286,7 @@ type Copy = {
   scanningServices: string;
   detectedServices: (count: number) => string;
   selectAll: string;
-  importSelected: string;
+  importSelected: (count: number) => string;
   noServicesDetected: string;
   scanFailed: string;
   servicesImported: (count: number) => string;
@@ -448,7 +448,7 @@ const COPY: Record<AppLanguage, Copy> = {
     scanningServices: '扫描中...',
     detectedServices: (count) => `检测到 ${count} 个 Spring Boot 服务`,
     selectAll: '全选',
-    importSelected: '导入选中服务',
+    importSelected: (count) => `导入 ${count} 个服务`,
     noServicesDetected: '未检测到 Spring Boot 服务',
     scanFailed: '扫描失败',
     servicesImported: (count) => `已导入 ${count} 个服务`
@@ -609,7 +609,7 @@ const COPY: Record<AppLanguage, Copy> = {
     scanningServices: 'Scanning...',
     detectedServices: (count) => `Detected ${count} Spring Boot services`,
     selectAll: 'Select All',
-    importSelected: 'Import Selected',
+    importSelected: (count) => `Import ${count} ${count === 1 ? 'Service' : 'Services'}`,
     noServicesDetected: 'No Spring Boot services detected',
     scanFailed: 'Scan failed',
     servicesImported: (count) => `Imported ${count} services`
@@ -3051,7 +3051,7 @@ export function App() {
                   </label>
                 </section>
 
-                <section className="pilot-settings-group">
+                <section className="pilot-settings-group pilot-settings-group--logs">
                   <div className="pilot-settings-section__heading">
                     <div className="pilot-settings-section__title">{copy.logConfig}</div>
                   </div>
@@ -3517,7 +3517,7 @@ export function App() {
 
       {serviceForm && (
         <div className="modal-overlay">
-          <div className="modal">
+          <div className="modal modal--service">
             <div className="modal-header">
               <div>
                 <div className="modal-title">{serviceForm.id ? copy.updateService : copy.createService}</div>
@@ -3600,7 +3600,7 @@ export function App() {
                     />
                   </label>
 
-                  {serviceForm.serviceKind === 'spring' && (
+                  {serviceForm.serviceKind === 'spring' && !serviceForm.id && (
                     <label className="field field--full">
                       <span>{copy.mainClass}</span>
                       <input
@@ -3730,7 +3730,7 @@ export function App() {
 
       {scanModalOpen && (
         <div className="modal-overlay">
-          <div className="modal large">
+          <div className="modal large modal--scan">
             <div className="modal-header">
               <div>
                 <div className="modal-title">{copy.scanImport}</div>
@@ -3796,9 +3796,13 @@ export function App() {
                           checked={scanSelected.has(service.workingDir)}
                           onChange={() => handleToggleScanSelect(service.workingDir)}
                         />
-                        <span className="scan-row__name">{service.name}</span>
-                        {service.port && <span className="scan-row__port">:{service.port}</span>}
-                        <span className="scan-row__dir" title={service.workingDir}>{service.workingDir}</span>
+                        <span className="scan-row__info">
+                          <span className="scan-row__headline">
+                            <span className="scan-row__name">{service.name}</span>
+                            {service.port && <span className="scan-row__port">:{service.port}</span>}
+                          </span>
+                          <span className="scan-row__dir" title={service.workingDir}>{service.workingDir}</span>
+                        </span>
                       </label>
                     ))}
                   </div>
@@ -3817,7 +3821,7 @@ export function App() {
                   disabled={busyKey !== '' || scanSelected.size === 0}
                   icon="arrowDown"
                   kind="primary"
-                  label={`${copy.importSelected} (${scanSelected.size})`}
+                  label={copy.importSelected(scanSelected.size)}
                   onClick={() => void handleBatchImportSelected()}
                 />
               )}
